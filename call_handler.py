@@ -486,21 +486,30 @@ class CallHandler:
         if self._send_clear:
             await self._send_clear()
 
-        # 4. Reset playback model
+        # 4. Trim outbound recording — remove audio that was flushed (never heard)
+        barge_sample = int((time.perf_counter() - self._rec_wall_start) * SAMPLE_RATE_8K)
+        trimmed = []
+        for offset, data in self._rec_outbound:
+            end = offset + len(data)
+            if offset >= barge_sample:
+                continue  # Queued but never played — discard entirely
+            if end > barge_sample:
+                # Partially played — keep only what was heard
+                trimmed.append((offset, data[:barge_sample - offset]))
+            else:
+                trimmed.append((offset, data))
+        self._rec_outbound = trimmed
+
+        # 5. Reset playback model
         self._playback_end_time = 0.0
 
-        # 5. Transition to listening
+        # 6. Transition to listening
         self.speaking = False
         self._bot_speak_start_time = 0.0
         self._barge_in_count = 0
 
-        # 6. Reset VAD, then feed circular buffer to seed it with barge-in speech
-        self.vad.reset()
-        for buffered_pcm in self._barge_in_audio_buffer:
-            self.vad.feed(buffered_pcm)
-        self._barge_in_audio_buffer.clear()
-
-        # 7. Wait for pipeline task to finish (should exit quickly since _llm_cancel is set)
+        # 7. Wait for pipeline task to finish FIRST — its finally block calls
+        #    vad.reset(), so we must let it run before we seed the VAD.
         if self._pipeline_task and not self._pipeline_task.done():
             try:
                 await asyncio.wait_for(self._pipeline_task, timeout=2.0)
@@ -508,7 +517,13 @@ class CallHandler:
                 log.warning("[%s] Pipeline task did not finish in time after barge-in",
                             self.call_sid)
 
-        # 8. Allow new pipelines
+        # 8. NOW seed VAD with barge-in speech (after pipeline's finally has run)
+        self.vad.reset()
+        for buffered_pcm in self._barge_in_audio_buffer:
+            self.vad.feed(buffered_pcm)
+        self._barge_in_audio_buffer.clear()
+
+        # 9. Allow new pipelines
         self._processing = False
 
         # Reset silence timer

@@ -15,8 +15,68 @@ import numpy as np
 import torch
 
 from chatterbox.tts_turbo import ChatterboxTurboTTS
+from chatterbox.models.s3tokenizer import S3_SR
+from chatterbox.models.s3gen import S3GEN_SR
+from chatterbox.models.t3.modules.cond_enc import T3Cond
 
 log = logging.getLogger(__name__)
+
+# Workaround: chatterbox's prepare_conditionals promotes float32 -> float64 via
+# Python float multiplication in norm_loudness, which crashes downstream LSTM layers.
+# Try the original first; if it fails with a dtype error, fall back to our float32 version.
+# Remove this patch once the upstream fix lands (track: github.com/resemble-ai/chatterbox).
+_orig_prepare = ChatterboxTurboTTS.prepare_conditionals
+
+def _prepare_conditionals_f32(self, wav_fpath, exaggeration=0.5, norm_loudness=True):
+    import librosa
+
+    s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
+    s3gen_ref_wav = s3gen_ref_wav.astype(np.float32)
+
+    assert len(s3gen_ref_wav) / _sr > 5.0, "Audio prompt must be longer than 5 seconds!"
+
+    if norm_loudness:
+        s3gen_ref_wav = self.norm_loudness(s3gen_ref_wav, _sr)
+        s3gen_ref_wav = np.asarray(s3gen_ref_wav, dtype=np.float32)
+
+    ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
+    ref_16k_wav = np.asarray(ref_16k_wav, dtype=np.float32)
+
+    s3gen_ref_wav = s3gen_ref_wav[:self.DEC_COND_LEN]
+    s3gen_ref_dict = self.s3gen.embed_ref(s3gen_ref_wav, S3GEN_SR, device=self.device)
+
+    t3_cond_prompt_tokens = None
+    if plen := self.t3.hp.speech_cond_prompt_len:
+        s3_tokzr = self.s3gen.tokenizer
+        t3_cond_prompt_tokens, _ = s3_tokzr.forward(
+            [ref_16k_wav[:self.ENC_COND_LEN]], max_len=plen
+        )
+        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(self.device)
+
+    ve_embed = torch.from_numpy(
+        self.ve.embeds_from_wavs([ref_16k_wav], sample_rate=S3_SR)
+    )
+    ve_embed = ve_embed.mean(axis=0, keepdim=True).to(self.device)
+
+    from chatterbox.tts_turbo import Conditionals
+    t3_cond = T3Cond(
+        speaker_emb=ve_embed,
+        cond_prompt_speech_tokens=t3_cond_prompt_tokens,
+        emotion_adv=exaggeration * torch.ones(1, 1, 1),
+    ).to(device=self.device)
+    self.conds = Conditionals(t3_cond, s3gen_ref_dict)
+
+def _prepare_conditionals_safe(self, wav_fpath, exaggeration=0.5, norm_loudness=True):
+    try:
+        _orig_prepare(self, wav_fpath, exaggeration=exaggeration, norm_loudness=norm_loudness)
+    except RuntimeError as e:
+        if "expected scalar type Float" in str(e) or "dtype" in str(e).lower():
+            log.warning("Upstream prepare_conditionals hit dtype bug, using float32 patch")
+            _prepare_conditionals_f32(self, wav_fpath, exaggeration=exaggeration, norm_loudness=norm_loudness)
+        else:
+            raise
+
+ChatterboxTurboTTS.prepare_conditionals = _prepare_conditionals_safe
 
 SAMPLE_RATE_CHATTERBOX = 24000
 SAMPLE_RATE_8K = 8000
