@@ -143,7 +143,6 @@ class CallHandler:
             cached = self._greeting_cache[period]
             greeting = cached["text"]
             mulaw_bytes = cached["mulaw"]
-            log.info("[%s] Sending pre-recorded greeting: %s", self.call_sid, greeting)
 
             # Track playback timing
             now = time.perf_counter()
@@ -155,12 +154,12 @@ class CallHandler:
             self._rec_outbound.append((rec_offset, mulaw_bytes))
 
             await self._send_audio(mulaw_bytes)
-            log.info("[%s] Greeting sent (%d bytes, %.1fs audio)",
-                     self.call_sid, len(mulaw_bytes), audio_duration)
+            log.debug("[%s] Greeting sent (%d bytes, %.1fs audio)",
+                      self.call_sid, len(mulaw_bytes), audio_duration)
         else:
             # Fallback: generate on the fly
             greeting = get_greeting(self.config.owner_name)
-            log.info("[%s] Sending greeting (live TTS): %s", self.call_sid, greeting)
+            log.debug("[%s] Sending greeting (live TTS): %s", self.call_sid, greeting)
             await self._synthesize_and_send(greeting)
 
         self.transcript.append({"role": "agent", "text": greeting})
@@ -196,16 +195,16 @@ class CallHandler:
         # Updated in STATE 2 and STATE 3 (not STATE 1 — can't distinguish speech from noise)
         if not self._ema_calibrated and self._audio_frame_count >= BARGE_IN_CALIBRATION_FRAMES:
             self._ema_calibrated = True
-            log.info("[%s] Noise floor calibrated: EMA=%.4f threshold=%.4f",
-                     self.call_sid, self._rms_ema,
-                     max(BARGE_IN_RMS_FLOOR, self._rms_ema + BARGE_IN_RMS_DELTA))
+            log.debug("[%s] Noise floor calibrated: EMA=%.4f threshold=%.4f",
+                      self.call_sid, self._rms_ema,
+                      max(BARGE_IN_RMS_FLOOR, self._rms_ema + BARGE_IN_RMS_DELTA))
 
         # Debug logging every ~2 seconds
         if self._audio_frame_count % 100 == 1:
-            log.info("[%s] frame #%d: RMS=%.4f speaking=%s vad=%s cooldown=%s ema=%.4f cal=%s",
-                     self.call_sid, self._audio_frame_count, rms,
-                     self.speaking, self.vad.speaking, self._in_echo_cooldown(),
-                     self._rms_ema, self._ema_calibrated)
+            log.debug("[%s] frame #%d: RMS=%.4f speaking=%s vad=%s cooldown=%s ema=%.4f cal=%s",
+                      self.call_sid, self._audio_frame_count, rms,
+                      self.speaking, self.vad.speaking, self._in_echo_cooldown(),
+                      self._rms_ema, self._ema_calibrated)
 
         # === STATE 1: SPEAKING — detect barge-in ===
         if self.speaking:
@@ -298,7 +297,7 @@ class CallHandler:
         t0 = time.perf_counter()
         text = await asyncio.to_thread(self.stt.transcribe, audio_8k, SAMPLE_RATE_8K)
         stt_ms = (time.perf_counter() - t0) * 1000
-        log.info("[%s] STT (%.0fms, %.1fs audio): %s", self.call_sid, stt_ms, duration_s, text)
+        log.info('[%s] Caller: "%s"  (%.0fms)', self.call_sid, text, stt_ms)
 
         if not text.strip():
             return
@@ -366,7 +365,7 @@ class CallHandler:
                 sentence, is_final = item
 
                 if self._llm_cancel.is_set():
-                    log.info("[%s] Interrupted, stopping pipeline", self.call_sid)
+                    log.debug("[%s] Interrupted, stopping pipeline", self.call_sid)
                     break
 
                 # Detect [HANGUP] tag from LLM
@@ -379,8 +378,7 @@ class CallHandler:
 
                 if first_sentence:
                     llm_ms = (time.perf_counter() - t1) * 1000
-                    log.info("[%s] LLM first sentence (%.0fms): %s",
-                             self.call_sid, llm_ms, sentence)
+                    log.info('[%s] HAL: "%s"  (%.0fms)', self.call_sid, sentence, llm_ms)
                     first_sentence = False
 
                 if sentence:
@@ -418,10 +416,10 @@ class CallHandler:
         if hangup_after:
             # Wait for SignalWire to finish playing ALL queued audio
             remaining = max(0, self._playback_end_time - time.perf_counter()) + 0.5
-            log.info("[%s] Waiting %.1fs for goodbye audio to play", self.call_sid, remaining)
+            log.debug("[%s] Waiting %.1fs for goodbye audio to play", self.call_sid, remaining)
             await asyncio.sleep(remaining)
             self.hangup_requested = True
-            log.info("[%s] Hangup flag set", self.call_sid)
+            log.debug("[%s] Hangup flag set", self.call_sid)
         else:
             # Reset silence timer after normal pipeline completion
             self._reset_silence_timer()
@@ -435,7 +433,7 @@ class CallHandler:
         if self._sentences_spoken:
             clean_response = ' '.join(self._sentences_spoken)
             self.llm.history.append({"role": "assistant", "content": clean_response})
-            log.info("[%s] History finalized: %s", self.call_sid, clean_response[:100])
+            log.debug("[%s] History finalized: %s", self.call_sid, clean_response[:100])
         else:
             # Nothing spoken — add fallback to maintain turn alternation
             self.llm.history.append({"role": "assistant", "content": "Could you say that again?"})
@@ -450,23 +448,23 @@ class CallHandler:
         # Guard: only add assistant message if there's a user message to respond to.
         # Barge-in during greeting/silence cooldown has no user message — don't pollute history.
         if not self.llm.history or self.llm.history[-1]["role"] != "user":
-            log.info("[%s] Barge-in with no pending user message, skipping history", self.call_sid)
+            log.debug("[%s] Barge-in with no pending user message, skipping history", self.call_sid)
             return
 
         if self._sentences_spoken:
             clean_response = ' '.join(self._sentences_spoken) + " [interrupted]"
             self.llm.history.append({"role": "assistant", "content": clean_response})
-            log.info("[%s] Interrupted history finalized: %s", self.call_sid, clean_response[:100])
+            log.debug("[%s] Interrupted history finalized: %s", self.call_sid, clean_response[:100])
         else:
             # Bot was interrupted before speaking any sentence — remove the orphan user message
             # since the bot never responded, it's as if the exchange never happened
             removed = self.llm.history.pop()
-            log.info("[%s] Interrupted before speech, removed orphan user msg: %s",
-                     self.call_sid, removed["content"][:60])
+            log.debug("[%s] Interrupted before speech, removed orphan user msg: %s",
+                      self.call_sid, removed["content"][:60])
 
     async def _handle_barge_in(self):
         """Handle caller barge-in: stop pipeline, flush audio, seed VAD."""
-        log.info("[%s] Handling barge-in", self.call_sid)
+        log.debug("[%s] Handling barge-in", self.call_sid)
 
         # 1. Signal pipeline to stop
         self._llm_cancel.set()
@@ -627,9 +625,9 @@ class CallHandler:
             self._rec_outbound.append((rec_offset, mulaw_bytes))
 
             await self._send_audio(mulaw_bytes)
-            log.info("[%s] TTS (%.0fms, %d bytes, %.1fs audio): %s",
-                     self.call_sid, tts_ms, len(mulaw_bytes),
-                     audio_duration, text[:60])
+            log.debug("[%s] TTS (%.0fms, %d bytes, %.1fs audio): %s",
+                      self.call_sid, tts_ms, len(mulaw_bytes),
+                      audio_duration, text[:60])
 
     def _save_recording(self):
         """Save call as mono WAV — both parties mixed, like a real phone recording."""
@@ -691,7 +689,7 @@ class CallHandler:
 
             duration_s = total_samples / SAMPLE_RATE_8K
             size_mb = os.path.getsize(filepath) / (1024 * 1024)
-            log.info("[%s] Recording saved: %s (%.1fs, %.1fMB)",
+            log.info("[%s] Recording: %s (%.1fs, %.1fMB)",
                      self.call_sid, filepath, duration_s, size_mb)
 
         except Exception as e:
@@ -699,7 +697,7 @@ class CallHandler:
 
     async def on_stop(self) -> str:
         """Called when the call ends. Generates a summary."""
-        log.info("[%s] Call ended. Generating summary...", self.call_sid)
+        log.debug("[%s] Generating summary...", self.call_sid)
         self._llm_cancel.set()  # Kill any in-progress generation
 
         # Cancel silence timer
@@ -724,7 +722,7 @@ class CallHandler:
 
         try:
             summary = await asyncio.to_thread(self.llm.get_summary, self.transcript)
-            log.info("[%s] Summary: %s", self.call_sid, summary)
+            log.debug("[%s] Summary: %s", self.call_sid, summary)
             return summary
         except Exception as e:
             log.error("[%s] Summary generation failed: %s", self.call_sid, e)

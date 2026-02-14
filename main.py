@@ -1,7 +1,15 @@
 """Entry point — load environment, initialize models, start the server."""
 
-import logging
+# ── Suppress third-party warning noise before any imports ──
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
+warnings.filterwarnings("ignore", category=FutureWarning, module="diffusers")
+
 import os
+os.environ["NUMEXPR_MAX_THREADS"] = os.environ.get("NUMEXPR_MAX_THREADS", "8")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "8")  # suppress "NumExpr defaulting to N threads" msg
+
+import logging
 import sys
 import time
 
@@ -11,6 +19,11 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("hal")
+
+# Quiet down chatty third-party loggers
+for _logger_name in ("faster_whisper", "httpx", "httpcore", "uvicorn", "uvicorn.access",
+                      "uvicorn.error", "numexpr"):
+    logging.getLogger(_logger_name).setLevel(logging.WARNING)
 
 
 def _preflight():
@@ -94,6 +107,17 @@ def _preflight():
         sys.exit(1)
 
 
+BANNER = r"""
+  ██╗  ██╗ █████╗ ██╗
+  ██║  ██║██╔══██╗██║
+  ███████║███████║██║
+  ██╔══██║██╔══██║██║
+  ██║  ██║██║  ██║███████╗
+  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+  Answering Service
+"""
+
+
 def main():
     _preflight()
 
@@ -105,8 +129,9 @@ def main():
     from tts import TTS
     from server import create_app
 
+    print(BANNER)
     t_start = time.perf_counter()
-    log.info("HAL Answering Service starting up...")
+    log.info("Starting up...")
 
     load_dotenv()
     config = Config()
@@ -158,9 +183,9 @@ def main():
     app = create_app(config, stt, tts, vad_model, greeting_cache, silence_prompt_cache)
 
     total = time.perf_counter() - t_start
-    log.info("HAL Answering Service ready in %.1fs — listening on %s:%d", total, config.host, config.port)
+    log.info("Ready in %.1fs — listening on %s:%d", total, config.host, config.port)
 
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info",
+    uvicorn.run(app, host=config.host, port=config.port, log_level="warning",
                 ws_max_size=65536)
 
 

@@ -72,7 +72,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                  if now - ts > CALLSID_TTL_S]
         for sid in stale:
             validated_call_sids.pop(sid, None)
-            log.info("Pruned stale CallSid: %s", sid[:12])
+            log.debug("Pruned stale CallSid: %s", sid[:12])
 
     @app.get("/health")
     async def health():
@@ -102,7 +102,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
 <Response><Say>I'm sorry, all lines are currently busy. Please try again later.</Say><Hangup/></Response>"""
             return Response(content=cxml, media_type="application/xml")
 
-        log.info("Incoming call from %s", caller)
+        log.info("── Incoming call from %s ──", caller)
 
         # Track this as a validated call (with timestamp for TTL)
         validated_call_sids[call_sid] = time.monotonic()
@@ -133,7 +133,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
         """SignalWire bidirectional media stream WebSocket."""
 
         await ws.accept()
-        log.info("WebSocket connected")
+        log.debug("WebSocket connected")
 
         handler: CallHandler | None = None
         stream_sid: str | None = None
@@ -164,7 +164,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
             if stream_sid is None:
                 return
             await ws.send_json({"event": "clear", "streamSid": stream_sid})
-            log.info("Sent clear event")
+            log.debug("Sent clear event")
 
         async def _enforce_max_duration():
             """Kill the call if it exceeds max duration."""
@@ -201,7 +201,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                 event = data.get("event")
 
                 if event == "connected":
-                    log.info("Stream connected")
+                    log.debug("Stream connected")
 
                 elif event == "start":
                     start_obj = data.get("start", {})
@@ -235,7 +235,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                     if not start_timeout_task.done():
                         start_timeout_task.cancel()
 
-                    log.info("Stream started: call=%s caller=%s", call_sid, caller_number)
+                    log.info("━━━ Call started  caller=%s  id=%s ━━━", caller_number, call_sid[:12])
                     call_start_time = time.perf_counter()
 
                     # Start max duration timer
@@ -273,10 +273,11 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
 
                     # Agent requested hangup (LLM emitted [HANGUP])
                     if handler.hangup_requested:
-                        log.info("Agent requested call hangup")
+                        log.debug("Agent requested call hangup")
                         duration = time.perf_counter() - call_start_time
                         transcript = list(handler.transcript)
                         summary = await handler.on_stop()
+                        _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
                         await _notify(config, handler.caller_number, summary, duration, transcript)
                         active_calls.pop(handler.call_sid, None)
                         handler = None
@@ -287,22 +288,24 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                         break
 
                 elif event == "stop":
-                    log.info("Stream stopped")
+                    log.debug("Stream stopped")
                     if handler:
                         duration = time.perf_counter() - call_start_time
                         transcript = list(handler.transcript)
                         summary = await handler.on_stop()
+                        _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
                         await _notify(config, handler.caller_number, summary, duration, transcript)
                         active_calls.pop(handler.call_sid, None)
                         handler = None
                     break
 
         except WebSocketDisconnect:
-            log.info("WebSocket disconnected")
+            log.debug("WebSocket disconnected")
             if handler:
                 duration = time.perf_counter() - call_start_time
                 transcript = list(handler.transcript)
                 summary = await handler.on_stop()
+                _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
                 await _notify(config, handler.caller_number, summary, duration, transcript)
                 active_calls.pop(handler.call_sid, None)
         except Exception as e:
@@ -316,6 +319,14 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                 start_timeout_task.cancel()
 
     return app
+
+
+def _log_call_end(caller_number: str, call_sid: str, duration: float, summary: str):
+    """Print a clean call-end block to the terminal."""
+    mins, secs = divmod(int(duration), 60)
+    dur_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+    log.info("━━━ Call ended    caller=%s  id=%s  duration=%s ━━━", caller_number, call_sid[:12], dur_str)
+    log.info("Summary: %s", summary)
 
 
 async def _notify(config: Config, caller_number: str, summary: str,
@@ -348,6 +359,6 @@ async def _notify(config: Config, caller_number: str, summary: str,
                 },
                 timeout=10,
             )
-            log.info("ntfy sent: %s", resp.status_code)
+            log.debug("ntfy sent: %s", resp.status_code)
     except Exception as e:
         log.error("Failed to send ntfy: %s", e)
