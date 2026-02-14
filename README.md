@@ -52,7 +52,9 @@ Audio to caller <---|---+                      |
 
 ## Example call
 
-Listen to a real recorded call: [`recordings/example_call.wav`](recordings/example_call.wav)
+A real recorded call -- HAL picks up, screens the caller, and hangs up:
+
+<video src="recordings/example_call.mp4" controls></video>
 
 ## Latency
 
