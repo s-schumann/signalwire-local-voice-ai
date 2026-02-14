@@ -102,7 +102,7 @@ def _pcm_to_mulaw(audio_float: np.ndarray) -> bytes:
 
 class TTS:
     """
-    Chatterbox Turbo TTS wrapper for SuperCaller.
+    Chatterbox Turbo TTS wrapper for HAL Answering Service.
 
     The model and voice conditionals are loaded once at init and kept hot
     on GPU for the lifetime of this object. No cold-start penalty.

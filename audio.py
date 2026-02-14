@@ -56,7 +56,7 @@ class SileroVAD:
 
     Uses the Silero VAD model (same one used by LiveKit, Deepgram, etc.)
     for robust speech detection in noisy environments. Buffers 8kHz frames
-    to 512-sample chunks as required by Silero.
+    to 256-sample chunks as required by Silero.
     """
 
     def __init__(self, model, speech_threshold: float = 0.5,
@@ -95,7 +95,7 @@ class SileroVAD:
 
     def feed(self, audio_chunk: np.ndarray) -> str:
         """
-        Feed 8kHz float32 audio (any size). Buffers internally to 512-sample
+        Feed 8kHz float32 audio (any size). Buffers internally to 256-sample
         chunks for Silero, returns the latest state.
 
         Returns:

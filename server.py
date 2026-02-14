@@ -102,7 +102,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
 <Response><Say>I'm sorry, all lines are currently busy. Please try again later.</Say><Hangup/></Response>"""
             return Response(content=cxml, media_type="application/xml")
 
-        log.info("Incoming call: %s -> %s", caller, called)
+        log.info("Incoming call from %s", caller)
 
         # Track this as a validated call (with timestamp for TTL)
         validated_call_sids[call_sid] = time.monotonic()
