@@ -62,57 +62,107 @@ Audio to caller <---|---+                      |
 
 ## Quick start
 
-```bash
-# Clone
+### Windows
+
+```powershell
 git clone https://github.com/ninjahuttjr/hal-answering-service.git
 cd hal-answering-service
-
-# Install PyTorch with CUDA first (see https://pytorch.org/get-started/locally/)
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-
-# Install chatterbox-tts without its broken deps, then install everything
-pip install --no-deps chatterbox-tts
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your SignalWire credentials, public hostname, etc.
-
-# Start your local LLM in LM Studio, then:
+setup.bat                # auto-detects your GPU and installs everything
+copy .env.example .env   # then edit .env with your settings
 python main.py
 ```
 
-On first run, models download automatically (~3 GB). Subsequent starts use cached models.
+### Linux / macOS
 
-> **Note:** `chatterbox-tts` on PyPI pins `numpy<1.26` which has no Python 3.12 wheels. Install it with `--no-deps` first -- `requirements.txt` includes all its actual runtime dependencies.
+```bash
+git clone https://github.com/ninjahuttjr/hal-answering-service.git
+cd hal-answering-service
+chmod +x setup.sh
+./setup.sh               # auto-detects your GPU and installs everything
+cp .env.example .env     # then edit .env with your settings
+python main.py
+```
+
+The setup script creates a virtual environment, detects your CUDA version, installs PyTorch with the correct CUDA index, and handles all dependencies. On first run, models download automatically (~3 GB).
+
+You can force a specific CUDA version: `setup.bat cu124` / `./setup.sh cu124`, or use `cpu` for CPU-only.
 
 ## Setup
 
 ### 1. Install dependencies
 
-```bash
-git clone https://github.com/ninjahuttjr/hal-answering-service.git
-cd hal-answering-service
+Run the setup script for your platform:
+
+**Windows:**
+```powershell
+setup.bat
 ```
 
-Install PyTorch with CUDA support for your system. See [pytorch.org](https://pytorch.org/get-started/locally/) for the right command. Example for CUDA 12.4:
-
+**Linux / macOS:**
 ```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+The setup script will:
+- Create a Python virtual environment
+- Auto-detect your NVIDIA GPU and install the right PyTorch + CUDA
+- Install `chatterbox-tts` with `--no-deps` (the PyPI package has [broken dependency pins](https://github.com/resemble-ai/chatterbox/issues) for Python 3.12+)
+- Install all other dependencies
+- Verify that everything imports correctly
+
+Override CUDA version if needed:
+
+| Command | CUDA version |
+|---|---|
+| `setup.bat cu128` / `./setup.sh cu128` | CUDA 12.8 (RTX 50-series) |
+| `setup.bat cu124` / `./setup.sh cu124` | CUDA 12.4 (RTX 40-series) |
+| `setup.bat cu121` / `./setup.sh cu121` | CUDA 12.1 |
+| `setup.bat cpu` / `./setup.sh cpu` | CPU only (no GPU) |
+
+<details>
+<summary>Manual install (without setup script)</summary>
+
+**Windows:**
+```powershell
+python -m venv venv
+venv\Scripts\activate
+
+# Install PyTorch with CUDA (see https://pytorch.org/get-started/locally/)
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-```
 
-Then install chatterbox-tts without its broken dependency constraints, and install everything else:
+# Install chatterbox-tts without its broken deps (must be >=0.1.5)
+pip install --no-deps "chatterbox-tts>=0.1.5"
 
-```bash
-pip install --no-deps chatterbox-tts
+# Install everything else
 pip install -r requirements.txt
 ```
 
+**Linux / macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+
+# Install PyTorch with CUDA (see https://pytorch.org/get-started/locally/)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Install chatterbox-tts without its broken deps (must be >=0.1.5)
+pip install --no-deps 'chatterbox-tts>=0.1.5'
+
+# Install everything else
+pip install -r requirements.txt
+```
+
+**Important:** `chatterbox-tts` must be version 0.1.5 or later. Earlier versions are missing the `chatterbox.tts_turbo` module and will crash on startup.
+
+</details>
+
 ### 2. Configure
 
-```bash
-cp .env.example .env
-```
+Copy the example config and fill in your values:
+
+**Windows:** `copy .env.example .env`
+**Linux / macOS:** `cp .env.example .env`
 
 Edit `.env` -- the required fields are:
 
@@ -129,7 +179,7 @@ Optional but recommended:
 
 | Variable | What it is |
 |---|---|
-| `HF_TOKEN` | Hugging Face token for downloading Chatterbox Turbo ([get one here](https://huggingface.co/settings/tokens)) |
+| `HF_TOKEN` | Hugging Face token -- needed to download the Chatterbox model on first run ([get one here](https://huggingface.co/settings/tokens)) |
 | `TTS_VOICE_PROMPT` | Path to a WAV file (>5s) for voice cloning |
 | `NTFY_TOPIC` | [ntfy.sh](https://ntfy.sh) topic for call notifications |
 | `SIGNALWIRE_SIGNING_KEY` | Webhook signing key (falls back to `SIGNALWIRE_TOKEN` if unset) |
@@ -171,7 +221,17 @@ Make sure it's set to **POST** and the format is **XML**.
 
 ### 6. Run
 
+Activate your virtual environment first, then start the server:
+
+**Windows:**
+```powershell
+venv\Scripts\activate
+python main.py
+```
+
+**Linux / macOS:**
 ```bash
+source venv/bin/activate
 python main.py
 ```
 
@@ -239,6 +299,7 @@ All settings are configured via environment variables (`.env` file).
 | `LLM_MAX_TOKENS` | `200` | Max response tokens |
 | `LLM_TEMPERATURE` | `0.7` | Sampling temperature |
 | **TTS** | | |
+| `HF_TOKEN` | *(none)* | Hugging Face token for model download |
 | `TTS_VOICE_PROMPT` | *(none)* | Path to voice cloning WAV (>5s) |
 | **VAD** | | |
 | `VAD_SPEECH_THRESHOLD` | `0.5` | Silero speech probability threshold |
@@ -250,6 +311,17 @@ All settings are configured via environment variables (`.env` file).
 | `NTFY_TOPIC` | *(none)* | ntfy.sh topic for notifications |
 
 </details>
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `ModuleNotFoundError: No module named 'chatterbox.tts_turbo'` | Your `chatterbox-tts` is too old. Run `pip install --no-deps "chatterbox-tts>=0.1.5"` |
+| PyTorch says CUDA not available after install | `chatterbox-tts` overwrote your CUDA PyTorch. Reinstall: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
+| `pkg_resources` deprecation warning | Harmless warning from `resemble-perth`. Can be ignored. |
+| Models downloading on every start | Set `HF_TOKEN` in `.env` so Hugging Face can cache properly. First run downloads ~3 GB. |
+| `CUDA out of memory` | Reduce `STT_MODEL` to `base` or `small`, or use `STT_COMPUTE_TYPE=int8`. |
+| Connection refused on port 1234 | Start LM Studio (or your LLM server) before running `python main.py`. |
 
 ## Acknowledgments
 

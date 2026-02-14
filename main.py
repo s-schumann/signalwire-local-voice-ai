@@ -6,16 +6,8 @@ Load environment, initialize models, start the server.
 
 import logging
 import os
+import sys
 import time
-
-import uvicorn
-from dotenv import load_dotenv
-
-from config import Config
-from audio import load_silero_model
-from stt import SpeechToText
-from tts import TTS
-from server import create_app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +17,98 @@ logging.basicConfig(
 log = logging.getLogger("supercaller")
 
 
+def _preflight():
+    """Check for common setup issues and print helpful errors instead of tracebacks."""
+    errors = []
+
+    # Check .env file exists
+    if not os.path.exists(".env"):
+        errors.append(
+            "No .env file found.\n"
+            "  Copy the example config and fill in your values:\n"
+            "    Windows:     copy .env.example .env\n"
+            "    Linux/macOS: cp .env.example .env"
+        )
+
+    # Check Python version
+    if sys.version_info < (3, 12):
+        errors.append(f"Python 3.12+ required, but you have {sys.version_info.major}.{sys.version_info.minor}.")
+
+    # Check PyTorch + CUDA
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            errors.append(
+                "PyTorch cannot find CUDA.\n"
+                "  Make sure you installed PyTorch with the correct CUDA index:\n"
+                "    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124\n"
+                "  If you don't have an NVIDIA GPU, set STT_DEVICE=cpu in .env."
+            )
+    except ImportError:
+        errors.append("PyTorch is not installed. Run the setup script: setup.bat (Windows) or ./setup.sh (Linux/macOS)")
+
+    # Check chatterbox version
+    try:
+        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: F401
+    except ImportError:
+        try:
+            import chatterbox
+            ver = getattr(chatterbox, "__version__", "unknown")
+            errors.append(
+                f"chatterbox-tts {ver} is too old (missing tts_turbo module).\n"
+                "  Upgrade to >=0.1.5:\n"
+                '    pip install --no-deps "chatterbox-tts>=0.1.5"'
+            )
+        except ImportError:
+            errors.append(
+                "chatterbox-tts is not installed.\n"
+                "  Install it with:\n"
+                '    pip install --no-deps "chatterbox-tts>=0.1.5"'
+            )
+
+    # Check required env vars (only if .env exists)
+    if os.path.exists(".env"):
+        from dotenv import load_dotenv
+        load_dotenv()
+        required = {
+            "SIGNALWIRE_PROJECT_ID": "SignalWire project ID (from dashboard)",
+            "SIGNALWIRE_TOKEN": "SignalWire API token",
+            "SIGNALWIRE_SPACE": "SignalWire space name",
+            "SIGNALWIRE_PHONE_NUMBER": "SignalWire phone number",
+            "PUBLIC_HOST": "Public HTTPS hostname",
+        }
+        missing = []
+        for key, desc in required.items():
+            val = os.environ.get(key, "")
+            if not val or val.startswith("your-") or val == "+1XXXXXXXXXX":
+                missing.append(f"    {key} -- {desc}")
+        if missing:
+            errors.append("Missing required settings in .env:\n" + "\n".join(missing))
+
+    if errors:
+        print("\n" + "=" * 60)
+        print("  SETUP ISSUES DETECTED")
+        print("=" * 60)
+        for i, err in enumerate(errors, 1):
+            print(f"\n  {i}. {err}")
+        print("\n" + "=" * 60)
+        print("  Fix the above and try again.")
+        print("  See README.md for full setup instructions.")
+        print("=" * 60 + "\n")
+        sys.exit(1)
+
+
 def main():
+    _preflight()
+
+    import uvicorn
+    from dotenv import load_dotenv
+    from config import Config
+    from audio import load_silero_model
+    from stt import SpeechToText
+    from tts import TTS
+    from server import create_app
+
     t_start = time.perf_counter()
     log.info("SuperCaller starting up...")
 
