@@ -50,6 +50,40 @@ Audio to caller <---|---+                      |
 - **Security** -- webhook signature validation, input truncation, XML escaping, prompt injection hardening
 - **Customizable personality** -- HAL 9000 is just the default. Change the system prompt in `prompts.py` and swap the voice WAV file to create any character you want
 
+## Latency
+
+End-to-end latency from the caller finishing their sentence to hearing the AI respond runs under 1.5 seconds in typical conversation. Best observed round-trip is **649ms**, fully local, with voice cloning.
+
+### Benchmarks (RTX 5090, glm-4.7-flash, Whisper large-v3-turbo)
+
+Measured across 15 conversational exchanges over 3 live phone calls:
+
+| Stage | Best | Typical | Worst |
+|---|---|---|---|
+| STT (Faster-Whisper) | 63 ms | 200--300 ms | 424 ms |
+| LLM (time to first sentence) | 162 ms | 180--280 ms | 846 ms |
+| TTS (Chatterbox Turbo, first chunk) | 345 ms | 500--850 ms | 1560 ms |
+| **End-to-end** | **649 ms** | **~1.0--1.5 s** | **~2.8 s** |
+
+> **Note:** These times start from when the VAD detects the caller has stopped speaking (after the 400ms silence threshold). The "worst" numbers are from the first exchange of a call when caches are cold. After that first turn, it's consistently faster.
+
+### Why it feels fast
+
+- **Sentence-level streaming** -- The LLM streams its response and TTS synthesizes each sentence as it arrives. The caller hears the first sentence while the rest is still being generated in the background.
+- **Pre-recorded greetings** -- The initial pickup is instant. Greetings are synthesized at startup and played from memory, so there's zero TTS delay on the first thing the caller hears.
+- **Barge-in** -- If the caller interrupts, audio clears instantly and the pipeline restarts. No waiting for the AI to finish its thought.
+- **GPU concurrency** -- STT, LLM, and TTS all run on GPU. With enough VRAM, all three models stay loaded and hot.
+
+### Hardware used for these benchmarks
+
+| Component | Details |
+|---|---|
+| GPU | NVIDIA RTX 5090 (32 GB VRAM) |
+| LLM | zai-org/glm-4.7-flash via LM Studio (thinking disabled) |
+| STT | Faster-Whisper large-v3-turbo (float16) |
+| TTS | Chatterbox Turbo with HAL 9000 voice clone |
+| VAD | Silero VAD (400ms silence threshold) |
+
 ## Requirements
 
 | Requirement | Details |
@@ -253,6 +287,16 @@ Chatterbox Turbo can clone any voice from a short reference recording:
 3. Restart the server.
 
 Two sample voices are included: `hal9000.wav` and `eugene.wav`.
+
+## Call forwarding setup
+
+You probably don't want every call going to an AI. Here's how I use it:
+
+**Conditional forwarding (Verizon):** Dial `*71` followed by your SignalWire number. This only forwards calls you don't answer, so if you don't pick up it goes to HAL instead of voicemail. Other carriers have similar codes -- check your carrier's conditional forwarding instructions.
+
+**Unknown callers only (iPhone):** Set up a Focus Mode that silences unknown numbers. Those calls go straight to HAL automatically while known contacts still ring through normally.
+
+These two together mean: known contacts ring your phone like normal, and if you don't answer they get HAL. Unknown numbers skip the ring entirely and go straight to HAL.
 
 ## Project structure
 
