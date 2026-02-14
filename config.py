@@ -40,7 +40,7 @@ class Config:
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", "lm-studio"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "zai-org/glm-4.7-flash"))
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LLM_MAX_TOKENS", 200))
-    llm_temperature: float = field(default_factory=lambda: _env_float("LLM_TEMPERATURE", 1.0))
+    llm_temperature: float = field(default_factory=lambda: _env_float("LLM_TEMPERATURE", 0.7))
 
     # TTS (Chatterbox Turbo)
     # Path to a WAV file (>5s) for voice cloning, or empty for default voice
