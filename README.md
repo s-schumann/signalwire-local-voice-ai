@@ -298,7 +298,7 @@ All settings are configured via environment variables (`.env` file).
 | `LLM_API_KEY` | `lm-studio` | API key (LM Studio ignores this) |
 | `LLM_MODEL` | `zai-org/glm-4.7-flash` | Model name |
 | `LLM_MAX_TOKENS` | `200` | Max response tokens |
-| `LLM_TEMPERATURE` | `0.7` | Sampling temperature |
+| `LLM_TEMPERATURE` | `1.0` | Sampling temperature |
 | **TTS** | | |
 | `HF_TOKEN` | *(none)* | Hugging Face token for model download |
 | `TTS_VOICE_PROMPT` | *(none)* | Path to voice cloning WAV (>5s) |
