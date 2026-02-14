@@ -48,6 +48,7 @@ Audio to caller <---|---+                      |
 - **Pre-recorded greetings** -- instant pickup, no TTS delay
 - **Silence handling** -- prompts quiet callers, auto-hangs-up after repeated silence
 - **Security** -- webhook signature validation, input truncation, XML escaping, prompt injection hardening
+- **Customizable personality** -- HAL 9000 is just the default. Change the system prompt in `prompts.py` and swap the voice WAV file to create any character you want
 
 ## Requirements
 
