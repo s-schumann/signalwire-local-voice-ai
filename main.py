@@ -10,7 +10,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)-20s %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("supercaller")
+log = logging.getLogger("hal")
 
 
 def _preflight():
@@ -106,7 +106,7 @@ def main():
     from server import create_app
 
     t_start = time.perf_counter()
-    log.info("SuperCaller starting up...")
+    log.info("HAL Answering Service starting up...")
 
     load_dotenv()
     config = Config()
@@ -158,7 +158,7 @@ def main():
     app = create_app(config, stt, tts, vad_model, greeting_cache, silence_prompt_cache)
 
     total = time.perf_counter() - t_start
-    log.info("SuperCaller ready in %.1fs — listening on %s:%d", total, config.host, config.port)
+    log.info("HAL Answering Service ready in %.1fs — listening on %s:%d", total, config.host, config.port)
 
     uvicorn.run(app, host=config.host, port=config.port, log_level="info",
                 ws_max_size=65536)

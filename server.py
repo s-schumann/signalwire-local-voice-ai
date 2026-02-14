@@ -59,7 +59,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                greeting_cache: dict | None = None,
                silence_prompt_cache: list | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(title="SuperCaller", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="HAL Answering Service", docs_url=None, redoc_url=None, openapi_url=None)
 
     # Track active calls and validated call SIDs with timestamp for TTL
     active_calls: dict[str, CallHandler] = {}

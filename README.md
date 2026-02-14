@@ -238,7 +238,7 @@ python main.py
 You should see the models load (~15-20s on first run), then:
 
 ```
-SuperCaller ready in 16.8s -- listening on 0.0.0.0:8080
+HAL Answering Service ready in 16.8s -- listening on 0.0.0.0:8080
 ```
 
 Call your SignalWire number and HAL will pick up.
