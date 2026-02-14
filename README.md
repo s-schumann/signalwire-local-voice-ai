@@ -1,8 +1,8 @@
-# HAL Answering Service
+# SuperCaller
 
-> A fully local AI phone screener that answers your calls as HAL 9000 -- collects the caller's name and reason, records the call, and sends you a summary.
+**A fully local AI phone screener.** Answers your calls as HAL 9000, collects the caller's name and reason, records the call, and sends you a push notification with a summary and full transcript.
 
-No cloud AI. No per-minute billing. Everything runs on your hardware with a local LLM, local speech-to-text, and local text-to-speech with voice cloning.
+No cloud AI. No per-minute billing. Runs entirely on your hardware using a local LLM, local speech-to-text, and local text-to-speech with voice cloning.
 
 ## How it works
 
@@ -316,11 +316,11 @@ All settings are configured via environment variables (`.env` file).
 
 | Problem | Fix |
 |---|---|
-| `ModuleNotFoundError: No module named 'chatterbox.tts_turbo'` | Your `chatterbox-tts` is too old. Run `pip install --no-deps "chatterbox-tts>=0.1.5"` |
-| PyTorch says CUDA not available after install | `chatterbox-tts` overwrote your CUDA PyTorch. Reinstall: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
-| `pkg_resources` deprecation warning | Harmless warning from `resemble-perth`. Can be ignored. |
-| Models downloading on every start | Set `HF_TOKEN` in `.env` so Hugging Face can cache properly. First run downloads ~3 GB. |
-| `CUDA out of memory` | Reduce `STT_MODEL` to `base` or `small`, or use `STT_COMPUTE_TYPE=int8`. |
+| `ModuleNotFoundError: No module named 'chatterbox.tts_turbo'` | `chatterbox-tts` is too old. Run: `pip install --no-deps "chatterbox-tts>=0.1.5"` |
+| PyTorch CUDA not available after install | `chatterbox-tts` overwrote your CUDA PyTorch. Reinstall: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
+| `pkg_resources` deprecation warning | Harmless. Comes from `resemble-perth`. Can be ignored. |
+| Models download on every start | Set `HF_TOKEN` in `.env` so Hugging Face caches properly. First run downloads ~3 GB. |
+| `CUDA out of memory` | Use a smaller STT model (`STT_MODEL=base`) or lower precision (`STT_COMPUTE_TYPE=int8`). |
 | Connection refused on port 1234 | Start LM Studio (or your LLM server) before running `python main.py`. |
 
 ## Acknowledgments

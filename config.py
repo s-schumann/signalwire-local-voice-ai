@@ -1,8 +1,4 @@
-"""
-SuperCaller Configuration
-=========================
-Dataclass-based config loaded from environment variables.
-"""
+"""Dataclass-based config loaded from environment variables."""
 
 import os
 from dataclasses import dataclass, field
@@ -56,7 +52,6 @@ class Config:
     vad_min_speech_ms: int = field(default_factory=lambda: _env_int("VAD_MIN_SPEECH_MS", 250))
 
     # Security
-    ws_auth_token: str = field(default_factory=lambda: _env("WS_AUTH_TOKEN", ""))
     max_concurrent_calls: int = field(default_factory=lambda: _env_int("MAX_CONCURRENT_CALLS", 3))
     max_call_duration_s: int = field(default_factory=lambda: _env_int("MAX_CALL_DURATION_S", 600))
 

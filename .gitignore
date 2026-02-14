@@ -1,4 +1,4 @@
-# Environment & Secrets
+# Secrets
 .env
 .env.local
 .env.*.local
@@ -8,7 +8,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
 *.egg
 *.egg-info/
 dist/
@@ -17,15 +16,12 @@ build/
 .venv/
 venv/
 env/
-ENV/
 
-# Recordings (runtime call audio)
+# Runtime
 recordings/
-
-# Logs
 *.log
 
-# IDE & Editors
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -35,9 +31,8 @@ recordings/
 # OS
 .DS_Store
 Thumbs.db
-nul
 
-# Development artifacts
+# Dev
 .claude/
 tts_benchmark.py
 tts_samples/

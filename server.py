@@ -1,14 +1,4 @@
-"""
-SuperCaller Server (Hardened)
-==============================
-FastAPI server with SignalWire webhook + WebSocket endpoints.
-- Webhook signature validation via SignalWire RequestValidator
-- WebSocket auth via validated CallSid tracking with TTL
-- Max concurrent call limits
-- Max call duration timeout
-- XML-escaped CXML responses
-- WebSocket connection timeout
-"""
+"""FastAPI server with SignalWire webhook and WebSocket media stream endpoints."""
 
 import asyncio
 import base64
@@ -94,7 +84,6 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
         form = dict(await request.form())
         call_sid = form.get("CallSid", "")
         caller = form.get("From", "unknown")
-        called = form.get("To", "unknown")
 
         # Validate webhook signature
         if not _validate_webhook(config, request, form):

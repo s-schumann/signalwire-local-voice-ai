@@ -1,9 +1,4 @@
-"""
-SuperCaller STT Module — Faster-Whisper Integration
-=====================================================
-Speech-to-text for telephony audio using Faster-Whisper.
-Optimized for speed: beam_size=1, tuned VAD filter, no_speech_threshold.
-"""
+"""Speech-to-text for telephony audio using Faster-Whisper."""
 
 import logging
 import numpy as np

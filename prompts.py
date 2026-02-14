@@ -1,8 +1,4 @@
-"""
-SuperCaller Prompts
-====================
-HAL 9000 personality for call screening. Supports [HANGUP] to end calls.
-"""
+"""HAL 9000 personality prompts for call screening."""
 
 from datetime import datetime
 
@@ -89,7 +85,7 @@ Transcript:
 {transcript}"""
 
 
-def build_system_prompt(owner_name: str = "", turn_count: int = 0) -> str:
+def build_system_prompt(owner_name: str = "") -> str:
     """Build the system prompt with dynamic context."""
     name = owner_name if owner_name else "the owner"
     now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")

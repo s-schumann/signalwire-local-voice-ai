@@ -1,9 +1,4 @@
-"""
-SuperCaller LLM Module — OpenAI-Compatible Client
-===================================================
-Streams responses from a local LLM (LM Studio) and yields
-complete sentences for TTS synthesis.
-"""
+"""OpenAI-compatible LLM client — streams responses and yields complete sentences for TTS."""
 
 import re
 import logging
@@ -81,27 +76,21 @@ class LLMClient:
             api_key=config.llm_api_key,
         )
         self.history: list[dict] = []
-        self._turn_count = 0
 
     def reset_history(self):
         """Clear conversation history."""
         self.history.clear()
-        self._turn_count = 0
 
     def add_user_message(self, text: str):
         """Append a user message to history."""
         self.history.append({"role": "user", "content": text})
-        self._turn_count += 1
         # Trim to max history
         if len(self.history) > MAX_HISTORY_MESSAGES:
             self.history = self.history[-MAX_HISTORY_MESSAGES:]
 
     def _build_messages(self) -> list[dict]:
         """Build the full message list with system prompt."""
-        system_prompt = build_system_prompt(
-            owner_name=self.config.owner_name,
-            turn_count=self._turn_count,
-        )
+        system_prompt = build_system_prompt(owner_name=self.config.owner_name)
         return [{"role": "system", "content": system_prompt}] + self.history
 
     def chat_stream_sentences(self, text: str) -> Generator[tuple[str, bool], None, None]:

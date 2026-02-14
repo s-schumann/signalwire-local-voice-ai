@@ -1,8 +1,4 @@
-"""
-SuperCaller Audio Utilities
-============================
-G.711 mu-law codec, resampling, and Silero VAD for telephony audio.
-"""
+"""G.711 mu-law codec, resampling, and Silero VAD for telephony audio."""
 
 import audioop
 import logging
@@ -12,10 +8,7 @@ import torch
 log = logging.getLogger(__name__)
 
 SAMPLE_RATE_8K = 8000
-FRAME_SIZE_20MS = 160  # 20ms at 8kHz
-
-# Silero VAD expects 256 samples at 8kHz (32ms), 512 at 16kHz
-SILERO_CHUNK = 256
+SILERO_CHUNK = 256  # 256 samples at 8kHz = 32ms per chunk
 
 
 def mulaw_decode(data: bytes) -> np.ndarray:
@@ -169,6 +162,11 @@ class SileroVAD:
         tensor = torch.from_numpy(audio_chunk[:SILERO_CHUNK]).float()
         prob = self._model(tensor, SAMPLE_RATE_8K).item()
         return prob > self.speech_threshold
+
+    @property
+    def speaking(self) -> bool:
+        """Whether the VAD is currently tracking active speech."""
+        return self._speaking
 
     def get_audio(self) -> np.ndarray:
         """Return accumulated speech audio buffer."""

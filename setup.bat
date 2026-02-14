@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-:: HAL Answering Service — Windows Setup Script
+:: SuperCaller — Windows Setup Script
 :: Installs all dependencies in the correct order.
 ::
 :: Usage:
@@ -126,6 +126,6 @@ if errorlevel 1 (
 :: ── Done ────────────────────────────────────────────────
 echo.
 echo [+] Setup complete! Next steps:
-echo   1. copy .env.example .env     &REM configure your settings
-echo   2. Start your LLM server      &REM e.g. LM Studio
-echo   3. python main.py             &REM start HAL
+echo   1. copy .env.example .env     (configure your settings)
+echo   2. Start your LLM server      (e.g. LM Studio)
+echo   3. python main.py             (start SuperCaller)

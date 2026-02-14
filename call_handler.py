@@ -1,12 +1,4 @@
-"""
-SuperCaller Call Handler
-=========================
-Per-call pipeline: VAD -> STT -> LLM -> TTS -> audio out.
-One CallHandler instance is created per incoming phone call.
-
-Supports barge-in detection (RMS-based), silence timeout,
-and decoupled pipeline processing (non-blocking frame loop).
-"""
+"""Per-call pipeline: VAD -> STT -> LLM -> TTS -> audio out."""
 
 import asyncio
 import audioop
@@ -212,7 +204,7 @@ class CallHandler:
         if self._audio_frame_count % 100 == 1:
             log.info("[%s] frame #%d: RMS=%.4f speaking=%s vad=%s cooldown=%s ema=%.4f cal=%s",
                      self.call_sid, self._audio_frame_count, rms,
-                     self.speaking, self.vad._speaking, self._in_echo_cooldown(),
+                     self.speaking, self.vad.speaking, self._in_echo_cooldown(),
                      self._rms_ema, self._ema_calibrated)
 
         # === STATE 1: SPEAKING — detect barge-in ===
@@ -272,7 +264,7 @@ class CallHandler:
 
         # Update adaptive noise floor during confirmed silence
         # (VAD not tracking speech, bot not talking)
-        if not self.vad._speaking:
+        if not self.vad.speaking:
             ema_alpha = RMS_EMA_ALPHA if self._ema_calibrated else RMS_EMA_ALPHA_FAST
             self._rms_ema = ema_alpha * rms + (1 - ema_alpha) * self._rms_ema
 
@@ -545,7 +537,7 @@ class CallHandler:
             return
 
         # Don't interrupt if bot is speaking, processing, or caller is mid-speech
-        if self.speaking or self._processing or self.vad._speaking:
+        if self.speaking or self._processing or self.vad.speaking:
             # Retry — restart the timer
             self._silence_timer = asyncio.create_task(self._silence_timeout_loop())
             return

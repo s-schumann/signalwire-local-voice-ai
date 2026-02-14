@@ -1,12 +1,4 @@
-"""
-SuperCaller TTS Module — Chatterbox Turbo Integration
-======================================================
-Provides the ChatterboxTurboTTSWrapper for real-time phone call synthesis.
-Model is loaded once at startup and kept hot on GPU. Conditionals (voice
-embedding) are pre-baked so every generate() call is fast.
-
-Output: 24kHz -> 8kHz resampled -> G.711 mu-law for telephony.
-"""
+"""Chatterbox Turbo TTS wrapper — voice cloning and G.711 mu-law output for telephony."""
 
 import audioop
 import logging
