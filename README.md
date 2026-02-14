@@ -46,7 +46,7 @@ Audio to caller <---|---+                      |
 
 A real recorded call -- HAL picks up, screens the caller, and hangs up:
 
-<video src="https://github.com/user-attachments/assets/e6674e5a-c175-4c9f-8b7b-28ca2f2b0fe1" controls></video>
+<video src="https://github.com/user-attachments/assets/3e2e5dbd-615d-431a-90f1-8bc2af0f7fae" controls></video>
 
 ## Requirements
 
