@@ -96,6 +96,7 @@ class CallHandler:
         self._rec_inbound: list[bytes] = []  # Raw mu-law from caller (continuous, in order)
         self._rec_outbound: list[tuple[int, bytes]] = []  # (wall-clock sample offset, mu-law)
         self._rec_wall_start: float = 0.0  # perf_counter at stream start
+        self.last_recording_path: str = ""
 
         # Playback cursor — models SignalWire's sequential audio buffer.
         self._playback_end_time: float = 0.0
@@ -633,6 +634,7 @@ class CallHandler:
         """Save call as mono WAV — both parties mixed, like a real phone recording."""
         if not self._rec_inbound:
             log.info("[%s] No audio to record", self.call_sid)
+            self.last_recording_path = ""
             return
 
         try:
@@ -687,12 +689,14 @@ class CallHandler:
                 wf.setframerate(SAMPLE_RATE_8K)
                 wf.writeframes(mixed.tobytes())
 
+            self.last_recording_path = filepath
             duration_s = total_samples / SAMPLE_RATE_8K
             size_mb = os.path.getsize(filepath) / (1024 * 1024)
             log.info("[%s] Recording: %s (%.1fs, %.1fMB)",
                      self.call_sid, filepath, duration_s, size_mb)
 
         except Exception as e:
+            self.last_recording_path = ""
             log.error("[%s] Failed to save recording: %s", self.call_sid, e, exc_info=True)
 
     async def on_stop(self) -> str:

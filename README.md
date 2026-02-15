@@ -37,6 +37,7 @@ Audio to caller <---|---+                      |
 - **Barge-in** -- caller can interrupt the AI mid-sentence, audio clears instantly
 - **Call recording** -- saves mixed mono WAV of both parties, accurately aligned
 - **Push notifications** -- call summary + full transcript via ntfy
+- **Built-in web dashboard** -- live call feed with summaries, transcript view, and audio playback
 - **Pre-recorded greetings** -- instant pickup, no TTS delay
 - **Silence handling** -- prompts quiet callers, auto-hangs-up after repeated silence
 - **Security** -- webhook signature validation, input truncation, XML escaping, prompt injection hardening
@@ -53,8 +54,8 @@ A real recorded call -- HAL picks up, screens the caller, and hangs up:
 | Requirement | Details |
 |---|---|
 | **Python** | 3.12+ |
-| **GPU** | NVIDIA with CUDA (Whisper + Chatterbox + VAD all run on GPU) |
-| **VRAM** | 16 GB+ recommended (Whisper large-v3-turbo + Chatterbox Turbo + Silero VAD ~ 6 GB, plus your LLM) |
+| **GPU** | Optional: NVIDIA CUDA recommended for best latency. CPU mode is supported (including macOS). |
+| **VRAM** | 16 GB+ recommended for full GPU stack (Whisper large-v3-turbo + Chatterbox Turbo + Silero VAD ~ 6 GB, plus your LLM) |
 | **SignalWire** | Account with a phone number ([signalwire.com](https://signalwire.com)) -- $0.50/mo for a number, ~$0.007/min for inbound calls |
 | **Local LLM** | [LM Studio](https://lmstudio.ai) or any OpenAI-compatible API server |
 | **Public endpoint** | HTTPS -- via Tailscale Funnel, Cloudflare Tunnel, ngrok, etc. |
@@ -82,7 +83,13 @@ cp .env.example .env     # then edit .env with your settings
 python main.py
 ```
 
-The setup script creates a virtual environment, detects your CUDA version, installs PyTorch with the correct CUDA index, and handles all dependencies. On first run, models download automatically (~3 GB).
+Open the dashboard at:
+
+```
+http://127.0.0.1:8080/dashboard
+```
+
+The setup script creates a virtual environment, installs CUDA PyTorch when an NVIDIA GPU is present (or CPU PyTorch otherwise), and handles all dependencies. On first run, models download automatically (~3 GB).
 
 You also need a local LLM running -- open [LM Studio](https://lmstudio.ai), load a model, and start the server. The default config expects `http://127.0.0.1:1234/v1`.
 
@@ -93,10 +100,12 @@ You also need a local LLM running -- open [LM Studio](https://lmstudio.ai), load
 
 Run the setup script for your platform. It will:
 - Create a Python virtual environment
-- Auto-detect your NVIDIA GPU and install the right PyTorch + CUDA
+- Auto-detect your NVIDIA GPU and install the right PyTorch build (CUDA or CPU)
 - Install `chatterbox-tts` with `--no-deps` (the PyPI package has [broken dependency pins](https://github.com/resemble-ai/chatterbox/issues) for Python 3.12+)
 - Install all other dependencies
 - Verify that everything imports correctly
+
+Important: run setup as your normal user (no `sudo`). Running with `sudo` can create a root-owned `venv` and break later installs.
 
 Override CUDA version if needed:
 
@@ -130,8 +139,11 @@ pip install -r requirements.txt
 python3 -m venv venv
 source venv/bin/activate
 
-# Install PyTorch with CUDA (see https://pytorch.org/get-started/locally/)
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Install PyTorch (macOS / CPU default):
+pip install torch torchaudio
+
+# If you're on NVIDIA Linux, use CUDA wheels instead:
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Install chatterbox-tts without its broken deps (must be >=0.1.5)
 pip install --no-deps 'chatterbox-tts>=0.1.5'
@@ -167,6 +179,7 @@ Optional but recommended:
 | Variable | What it is |
 |---|---|
 | `HF_TOKEN` | Hugging Face token -- needed to download the Chatterbox model on first run ([get one here](https://huggingface.co/settings/tokens)) |
+| `TTS_DEVICE` | `auto`, `cuda`, or `cpu` (default is `auto`) |
 | `TTS_VOICE_PROMPT` | Path to a WAV file (>5s) for voice cloning |
 | `NTFY_TOPIC` | [ntfy.sh](https://ntfy.sh) topic for call notifications |
 | `SIGNALWIRE_SIGNING_KEY` | Webhook signing key (falls back to `SIGNALWIRE_TOKEN` if unset) |
@@ -207,6 +220,15 @@ https://YOUR_PUBLIC_HOST/incoming-call
 Make sure it's set to **POST** and the format is **XML**.
 
 </details>
+
+## Dashboard
+
+After startup, open `http://127.0.0.1:8080/dashboard` to view recent calls.
+
+- `GET /dashboard` (or `/`) serves the web UI
+- `GET /api/calls?limit=50` returns recent call metadata as JSON
+- Recordings are served at `/recordings/<file>.wav`
+- Call metadata is stored in `recordings/metadata/*.json`
 
 ## Voice cloning
 
@@ -303,16 +325,17 @@ All settings are configured via environment variables (`.env` file).
 | `MAX_CALL_DURATION_S` | `600` | Max call length in seconds |
 | **STT** | | |
 | `STT_MODEL` | `large-v3-turbo` | Faster-Whisper model size |
-| `STT_DEVICE` | `cuda` | `cuda` or `cpu` |
-| `STT_COMPUTE_TYPE` | `float16` | `float16`, `int8`, etc. |
+| `STT_DEVICE` | `auto` | `auto`, `cuda`, or `cpu` |
+| `STT_COMPUTE_TYPE` | `auto` | `auto`, `float16`, `int8`, etc. |
 | **LLM** | | |
 | `LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | OpenAI-compatible API endpoint |
 | `LLM_API_KEY` | `lm-studio` | API key (LM Studio ignores this) |
 | `LLM_MODEL` | `zai-org/glm-4.7-flash` | Model name |
 | `LLM_MAX_TOKENS` | `200` | Max response tokens |
-| `LLM_TEMPERATURE` | `1.0` | Sampling temperature |
+| `LLM_TEMPERATURE` | `0.7` | Sampling temperature |
 | **TTS** | | |
 | `HF_TOKEN` | *(none)* | Hugging Face token for model download |
+| `TTS_DEVICE` | `auto` | `auto`, `cuda`, or `cpu` |
 | `TTS_VOICE_PROMPT` | *(none)* | Path to voice cloning WAV (>5s) |
 | **VAD** | | |
 | `VAD_SPEECH_THRESHOLD` | `0.5` | Silero speech probability threshold |
@@ -330,8 +353,10 @@ All settings are configured via environment variables (`.env` file).
 | Problem | Fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'chatterbox.tts_turbo'` | `chatterbox-tts` is too old. Run: `pip install --no-deps "chatterbox-tts>=0.1.5"` |
-| PyTorch CUDA not available after install | `chatterbox-tts` overwrote your CUDA PyTorch. Reinstall: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
+| `Permission denied` under `venv/.../site-packages` | You likely ran setup with `sudo`. Fix with `sudo rm -rf venv` then rerun `./setup.sh` as your normal user. |
+| PyTorch CUDA not available after install | If you're on macOS/CPU this is expected: keep `STT_DEVICE=auto` and `TTS_DEVICE=auto`. If you're on NVIDIA, reinstall CUDA PyTorch: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
 | Models download on every start | Set `HF_TOKEN` in `.env` so Hugging Face caches properly. First run downloads ~3 GB. |
+| Slow responses in CPU mode | Use a smaller STT model (`STT_MODEL=base`), keep `STT_COMPUTE_TYPE=auto`, and use a smaller local LLM model. |
 | `CUDA out of memory` | Use a smaller STT model (`STT_MODEL=base`) or lower precision (`STT_COMPUTE_TYPE=int8`). |
 | Connection refused on port 1234 | Start LM Studio (or your LLM server) before running `python main.py`. |
 

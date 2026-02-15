@@ -12,6 +12,7 @@ setlocal enabledelayedexpansion
 set "CUDA_TAG=%~1"
 if "%CUDA_TAG%"=="" set "CUDA_TAG=auto"
 set "VENV_DIR=venv"
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 
 :: ── Check Python ────────────────────────────────────────
 where python >nul 2>&1
@@ -105,7 +106,7 @@ if errorlevel 1 (
 
 :: ── Install everything else ─────────────────────────────
 echo [+] Installing dependencies...
-pip install -r requirements.txt --quiet
+pip install -r requirements.txt --quiet --no-warn-conflicts
 if errorlevel 1 (
     echo [x] Failed to install dependencies
     exit /b 1

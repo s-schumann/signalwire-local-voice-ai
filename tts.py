@@ -6,6 +6,7 @@ import time
 import numpy as np
 import torch
 
+import chatterbox.tts_turbo as chatterbox_turbo
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 from chatterbox.models.s3tokenizer import S3_SR
 from chatterbox.models.s3gen import S3GEN_SR
@@ -18,6 +19,15 @@ log = logging.getLogger(__name__)
 # Try the original first; if it fails with a dtype error, fall back to our float32 version.
 # Remove this patch once the upstream fix lands (track: github.com/resemble-ai/chatterbox).
 _orig_prepare = ChatterboxTurboTTS.prepare_conditionals
+
+# Workaround: on some environments (notably newer Python builds), Perth's implicit
+# watermarker import path can resolve to None. Chatterbox then calls it unconditionally
+# and crashes with "TypeError: 'NoneType' object is not callable".
+# Fall back to DummyWatermarker so TTS can still run.
+if getattr(chatterbox_turbo.perth, "PerthImplicitWatermarker", None) is None:
+    if getattr(chatterbox_turbo.perth, "DummyWatermarker", None) is not None:
+        log.warning("PerthImplicitWatermarker unavailable; using DummyWatermarker fallback")
+        chatterbox_turbo.perth.PerthImplicitWatermarker = chatterbox_turbo.perth.DummyWatermarker
 
 def _prepare_conditionals_f32(self, wav_fpath, exaggeration=0.5, norm_loudness=True):
     import librosa

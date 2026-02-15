@@ -6,10 +6,13 @@ import binascii
 import json
 import logging
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from config import Config
 from audio import SileroVAD
@@ -27,6 +30,12 @@ WS_START_TIMEOUT_S = 15
 
 # Max WebSocket frame size (SignalWire media frames are small — 20ms at 8kHz = ~160 bytes base64)
 WS_MAX_FRAME_SIZE = 65536
+
+# Relative folder under recordings_dir where call metadata JSON files are written
+CALL_METADATA_DIR = "metadata"
+
+# Dashboard frontend HTML (served at / and /dashboard)
+DASHBOARD_HTML_PATH = Path(__file__).with_name("dashboard.html")
 
 
 def _validate_webhook(config: Config, request: Request, form: dict) -> bool:
@@ -55,11 +64,82 @@ def _validate_webhook(config: Config, request: Request, form: dict) -> bool:
         return False
 
 
+def _duration_human(duration: float) -> str:
+    mins, secs = divmod(max(0, int(duration)), 60)
+    return f"{mins}m {secs}s" if mins else f"{secs}s"
+
+
+def _safe_token(value: str, fallback: str = "unknown") -> str:
+    token = "".join(ch for ch in (value or "") if ch.isalnum())
+    return token or fallback
+
+
+def _persist_call_metadata(
+    config: Config,
+    caller_number: str,
+    call_sid: str,
+    duration: float,
+    summary: str,
+    transcript: list[dict] | None = None,
+    recording_path: str = "",
+):
+    """Persist call details for the dashboard/API."""
+    try:
+        recordings_dir = Path(config.recordings_dir)
+        meta_dir = recordings_dir / CALL_METADATA_DIR
+        meta_dir.mkdir(parents=True, exist_ok=True)
+
+        rec_name = Path(recording_path).name if recording_path else ""
+        rec_full_path = recordings_dir / rec_name if rec_name else None
+        has_recording = bool(rec_name and rec_full_path and rec_full_path.exists())
+
+        now = datetime.now(timezone.utc)
+        payload = {
+            "created_at": now.isoformat(),
+            "caller_number": caller_number,
+            "call_sid": call_sid,
+            "duration_seconds": round(max(0.0, duration), 2),
+            "duration_human": _duration_human(duration),
+            "summary": (summary or "").strip(),
+            "transcript": transcript or [],
+            "recording_file": rec_name if has_recording else "",
+            "recording_url": f"/recordings/{rec_name}" if has_recording else "",
+        }
+
+        fname = f"{now.strftime('%Y%m%d_%H%M%S')}_{_safe_token(call_sid[:12])}.json"
+        meta_path = meta_dir / fname
+        meta_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    except Exception as e:
+        log.error("Failed to persist call metadata: %s", e)
+
+
+def _load_recent_calls(config: Config, limit: int = 50) -> list[dict]:
+    """Load recent call metadata for the dashboard API."""
+    meta_dir = Path(config.recordings_dir) / CALL_METADATA_DIR
+    if not meta_dir.exists():
+        return []
+
+    out: list[dict] = []
+    paths = sorted(meta_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in paths[:max(1, min(limit, 200))]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            out.append(data)
+    return out
+
+
 def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                greeting_cache: dict | None = None,
                silence_prompt_cache: list | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="HAL Answering Service", docs_url=None, redoc_url=None, openapi_url=None)
+    recordings_dir = Path(config.recordings_dir)
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    (recordings_dir / CALL_METADATA_DIR).mkdir(parents=True, exist_ok=True)
+    app.mount("/recordings", StaticFiles(directory=str(recordings_dir)), name="recordings")
 
     # Track active calls and validated call SIDs with timestamp for TTL
     active_calls: dict[str, CallHandler] = {}
@@ -77,6 +157,23 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard():
+        """Simple web dashboard for recent calls."""
+        try:
+            return HTMLResponse(DASHBOARD_HTML_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            return HTMLResponse(
+                f"<h1>Dashboard unavailable</h1><p>{xml_escape(str(e))}</p>",
+                status_code=500,
+            )
+
+    @app.get("/api/calls")
+    async def api_calls(limit: int = 50):
+        """Recent call metadata for the dashboard frontend."""
+        return {"calls": _load_recent_calls(config, limit=limit)}
 
     @app.post("/incoming-call")
     async def incoming_call(request: Request):
@@ -188,6 +285,29 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
         # Start the connection timeout — auto-closes if no "start" arrives
         start_timeout_task = asyncio.create_task(_enforce_start_timeout())
 
+        async def _finalize_call():
+            """Run call teardown once: summary, persistence, notification, cleanup."""
+            nonlocal handler
+            if not handler:
+                return
+
+            duration = max(0.0, time.perf_counter() - call_start_time) if call_start_time else 0.0
+            transcript = list(handler.transcript)
+            summary = await handler.on_stop()
+            _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
+            _persist_call_metadata(
+                config=config,
+                caller_number=handler.caller_number,
+                call_sid=handler.call_sid,
+                duration=duration,
+                summary=summary,
+                transcript=transcript,
+                recording_path=handler.last_recording_path,
+            )
+            await _notify(config, handler.caller_number, summary, duration, transcript)
+            active_calls.pop(handler.call_sid, None)
+            handler = None
+
         try:
             while True:
                 raw = await ws.receive_text()
@@ -274,13 +394,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
                     # Agent requested hangup (LLM emitted [HANGUP])
                     if handler.hangup_requested:
                         log.debug("Agent requested call hangup")
-                        duration = time.perf_counter() - call_start_time
-                        transcript = list(handler.transcript)
-                        summary = await handler.on_stop()
-                        _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
-                        await _notify(config, handler.caller_number, summary, duration, transcript)
-                        active_calls.pop(handler.call_sid, None)
-                        handler = None
+                        await _finalize_call()
                         try:
                             await ws.close(code=1000, reason="Agent ended call")
                         except Exception:
@@ -289,29 +403,15 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
 
                 elif event == "stop":
                     log.debug("Stream stopped")
-                    if handler:
-                        duration = time.perf_counter() - call_start_time
-                        transcript = list(handler.transcript)
-                        summary = await handler.on_stop()
-                        _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
-                        await _notify(config, handler.caller_number, summary, duration, transcript)
-                        active_calls.pop(handler.call_sid, None)
-                        handler = None
+                    await _finalize_call()
                     break
 
         except WebSocketDisconnect:
             log.debug("WebSocket disconnected")
-            if handler:
-                duration = time.perf_counter() - call_start_time
-                transcript = list(handler.transcript)
-                summary = await handler.on_stop()
-                _log_call_end(handler.caller_number, handler.call_sid, duration, summary)
-                await _notify(config, handler.caller_number, summary, duration, transcript)
-                active_calls.pop(handler.call_sid, None)
+            await _finalize_call()
         except Exception as e:
             log.error("WebSocket error: %s", type(e).__name__)
-            if handler:
-                active_calls.pop(handler.call_sid, None)
+            await _finalize_call()
         finally:
             if duration_task and not duration_task.done():
                 duration_task.cancel()
@@ -323,8 +423,7 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
 
 def _log_call_end(caller_number: str, call_sid: str, duration: float, summary: str):
     """Print a clean call-end block to the terminal."""
-    mins, secs = divmod(int(duration), 60)
-    dur_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+    dur_str = _duration_human(duration)
     log.info("━━━ Call ended    caller=%s  id=%s  duration=%s ━━━", caller_number, call_sid[:12], dur_str)
     log.info("Summary: %s", summary)
 

@@ -27,35 +27,100 @@ for _logger_name in ("faster_whisper", "httpx", "httpcore", "uvicorn", "uvicorn.
     logging.getLogger(_logger_name).setLevel(logging.WARNING)
 
 
+VALID_DEVICE_VALUES = {"auto", "cuda", "cpu"}
+
+
+def _normalize_choice(var_name: str, value: str, valid_values: set[str]) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        normalized = "auto"
+    if normalized not in valid_values:
+        allowed = ", ".join(sorted(valid_values))
+        raise ValueError(f"{var_name} must be one of: {allowed}. Got: {value!r}")
+    return normalized
+
+
+def _resolve_runtime(stt_device: str, stt_compute_type: str, tts_device: str, cuda_available: bool):
+    """Resolve effective runtime settings from user preferences + hardware."""
+    stt_pref = _normalize_choice("STT_DEVICE", stt_device, VALID_DEVICE_VALUES)
+    tts_pref = _normalize_choice("TTS_DEVICE", tts_device, VALID_DEVICE_VALUES)
+    compute_pref = (stt_compute_type or "auto").strip().lower() or "auto"
+
+    resolved_stt_device = "cuda" if stt_pref == "auto" and cuda_available else stt_pref
+    resolved_tts_device = "cuda" if tts_pref == "auto" and cuda_available else tts_pref
+    if stt_pref == "auto" and not cuda_available:
+        resolved_stt_device = "cpu"
+    if tts_pref == "auto" and not cuda_available:
+        resolved_tts_device = "cpu"
+
+    warnings = []
+    if resolved_stt_device == "cuda" and not cuda_available:
+        warnings.append("STT_DEVICE requested CUDA, but CUDA is unavailable. Falling back to CPU.")
+        resolved_stt_device = "cpu"
+    if resolved_tts_device == "cuda" and not cuda_available:
+        warnings.append("TTS_DEVICE requested CUDA, but CUDA is unavailable. Falling back to CPU.")
+        resolved_tts_device = "cpu"
+
+    if resolved_stt_device == "cpu":
+        if compute_pref in ("auto", "float16"):
+            resolved_compute_type = "int8"
+            warnings.append(
+                "Using STT on CPU; forcing STT_COMPUTE_TYPE=int8 "
+                "(float16 is CUDA-oriented and may fail or be slow on CPU)."
+            )
+        else:
+            resolved_compute_type = compute_pref
+    else:
+        resolved_compute_type = "float16" if compute_pref == "auto" else compute_pref
+
+    return resolved_stt_device, resolved_compute_type, resolved_tts_device, warnings
+
+
 def _preflight():
     """Check for common setup issues and print helpful errors instead of tracebacks."""
     errors = []
+    from config import Config
+
+    load_dotenv = None
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        errors.append(
+            "python-dotenv is not installed. Run the setup script: "
+            "setup.bat (Windows) or ./setup.sh (Linux/macOS)"
+        )
 
     # Check .env file exists
-    if not os.path.exists(".env"):
+    has_dotenv = os.path.exists(".env")
+    if not has_dotenv:
         errors.append(
             "No .env file found.\n"
             "  Copy the example config and fill in your values:\n"
             "    Windows:     copy .env.example .env\n"
             "    Linux/macOS: cp .env.example .env"
         )
+    elif load_dotenv:
+        load_dotenv()
 
     # Check Python version
     if sys.version_info < (3, 12):
         errors.append(f"Python 3.12+ required, but you have {sys.version_info.major}.{sys.version_info.minor}.")
 
     # Check PyTorch + CUDA
+    torch = None
     try:
         import torch
-        if not torch.cuda.is_available():
-            errors.append(
-                "PyTorch cannot find CUDA.\n"
-                "  Make sure you installed PyTorch with the correct CUDA index:\n"
-                "    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124\n"
-                "  If you don't have an NVIDIA GPU, set STT_DEVICE=cpu in .env."
-            )
     except ImportError:
         errors.append("PyTorch is not installed. Run the setup script: setup.bat (Windows) or ./setup.sh (Linux/macOS)")
+
+    config = Config()
+    if torch is not None:
+        try:
+            _resolve_runtime(
+                config.stt_device, config.stt_compute_type, config.tts_device, torch.cuda.is_available()
+            )
+        except ValueError as e:
+            errors.append(str(e))
 
     # Check chatterbox version
     try:
@@ -77,20 +142,24 @@ def _preflight():
             )
 
     # Check required env vars (only if .env exists)
-    if os.path.exists(".env"):
-        from dotenv import load_dotenv
-        load_dotenv()
+    if has_dotenv:
         required = {
             "SIGNALWIRE_PROJECT_ID": "SignalWire project ID (from dashboard)",
             "SIGNALWIRE_TOKEN": "SignalWire API token",
             "SIGNALWIRE_SPACE": "SignalWire space name",
             "SIGNALWIRE_PHONE_NUMBER": "SignalWire phone number",
             "PUBLIC_HOST": "Public HTTPS hostname",
+            "OWNER_NAME": "Name HAL uses in greetings",
         }
         missing = []
         for key, desc in required.items():
             val = os.environ.get(key, "")
-            if not val or val.startswith("your-") or val == "+1XXXXXXXXXX":
+            is_placeholder = (
+                val.startswith("your-")
+                or val == "+1XXXXXXXXXX"
+                or val == "YourName"
+            )
+            if not val or is_placeholder:
                 missing.append(f"    {key} -- {desc}")
         if missing:
             errors.append("Missing required settings in .env:\n" + "\n".join(missing))
@@ -138,20 +207,28 @@ def main():
     config = Config()
     log.info("Config loaded (LLM: %s, STT: %s)", config.llm_model, config.stt_model)
 
+    import torch
+    stt_device, stt_compute_type, tts_device, runtime_warnings = _resolve_runtime(
+        config.stt_device, config.stt_compute_type, config.tts_device, torch.cuda.is_available()
+    )
+    for warning_msg in runtime_warnings:
+        log.warning(warning_msg)
+    log.info("Runtime devices: STT=%s (%s), TTS=%s", stt_device, stt_compute_type, tts_device)
+
     # Load STT
     t0 = time.perf_counter()
     stt = SpeechToText(
         model_size=config.stt_model,
-        device=config.stt_device,
-        compute_type=config.stt_compute_type,
+        device=stt_device,
+        compute_type=stt_compute_type,
     )
     stt.load()
     log.info("STT loaded in %.1fs", time.perf_counter() - t0)
 
-    # Load TTS (kept hot on GPU)
+    # Load TTS (kept hot in memory)
     t0 = time.perf_counter()
     voice_prompt = config.tts_voice_prompt or None
-    tts = TTS(voice_prompt=voice_prompt, device="cuda")
+    tts = TTS(voice_prompt=voice_prompt, device=tts_device)
     log.info("TTS loaded in %.1fs", time.perf_counter() - t0)
 
     # Load VAD (shared across calls, deep-copied per call)

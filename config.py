@@ -32,8 +32,8 @@ class Config:
 
     # STT
     stt_model: str = field(default_factory=lambda: _env("STT_MODEL", "large-v3-turbo"))
-    stt_device: str = field(default_factory=lambda: _env("STT_DEVICE", "cuda"))
-    stt_compute_type: str = field(default_factory=lambda: _env("STT_COMPUTE_TYPE", "float16"))
+    stt_device: str = field(default_factory=lambda: _env("STT_DEVICE", "auto"))
+    stt_compute_type: str = field(default_factory=lambda: _env("STT_COMPUTE_TYPE", "auto"))
 
     # LLM
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:1234/v1"))
@@ -43,6 +43,7 @@ class Config:
     llm_temperature: float = field(default_factory=lambda: _env_float("LLM_TEMPERATURE", 0.7))
 
     # TTS (Chatterbox Turbo)
+    tts_device: str = field(default_factory=lambda: _env("TTS_DEVICE", "auto"))
     # Path to a WAV file (>5s) for voice cloning, or empty for default voice
     tts_voice_prompt: str = field(default_factory=lambda: _env("TTS_VOICE_PROMPT", ""))
 

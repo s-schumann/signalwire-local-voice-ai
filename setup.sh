@@ -9,6 +9,7 @@
 #   ./setup.sh cpu          # CPU-only (no GPU)
 
 set -euo pipefail
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 CUDA_TAG="${1:-auto}"
 VENV_DIR="venv"
@@ -22,6 +23,11 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
+
+# ── Safety checks ─────────────────────────────────────────
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    error "Do not run setup with sudo/root. Run as your normal user."
+fi
 
 # ── Check Python ────────────────────────────────────────
 PYTHON=""
@@ -40,6 +46,10 @@ done
 info "Using $PYTHON ($($PYTHON --version))"
 
 # ── Create venv ─────────────────────────────────────────
+if [ -d "$VENV_DIR" ] && [ ! -w "$VENV_DIR" ]; then
+    error "Existing $VENV_DIR is not writable (likely created with sudo). Remove it with: sudo rm -rf $VENV_DIR"
+fi
+
 if [ ! -d "$VENV_DIR" ]; then
     info "Creating virtual environment..."
     $PYTHON -m venv "$VENV_DIR"
@@ -101,7 +111,42 @@ pip install --no-deps 'chatterbox-tts>=0.1.5' --quiet
 
 # ── Install everything else ─────────────────────────────
 info "Installing dependencies..."
-pip install -r requirements.txt --quiet
+pip install -r requirements.txt --quiet --no-warn-conflicts
+
+# If .env exists and we're on CPU, normalize runtime defaults.
+if [ "$CUDA_TAG" = "cpu" ] && [ -f ".env" ]; then
+    info "Applying CPU-friendly defaults in .env (STT/TTS auto mode)..."
+    $PYTHON - <<'PY'
+from pathlib import Path
+
+p = Path(".env")
+lines = p.read_text(encoding="utf-8").splitlines()
+
+seen = {"STT_DEVICE": False, "STT_COMPUTE_TYPE": False, "TTS_DEVICE": False}
+out = []
+for line in lines:
+    if line.startswith("STT_DEVICE="):
+        out.append("STT_DEVICE=auto")
+        seen["STT_DEVICE"] = True
+    elif line.startswith("STT_COMPUTE_TYPE="):
+        out.append("STT_COMPUTE_TYPE=auto")
+        seen["STT_COMPUTE_TYPE"] = True
+    elif line.startswith("TTS_DEVICE="):
+        out.append("TTS_DEVICE=auto")
+        seen["TTS_DEVICE"] = True
+    else:
+        out.append(line)
+
+if not seen["STT_DEVICE"]:
+    out.append("STT_DEVICE=auto")
+if not seen["STT_COMPUTE_TYPE"]:
+    out.append("STT_COMPUTE_TYPE=auto")
+if not seen["TTS_DEVICE"]:
+    out.append("TTS_DEVICE=auto")
+
+p.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+fi
 
 # ── Verify ──────────────────────────────────────────────
 info "Verifying installation..."
