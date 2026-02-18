@@ -273,6 +273,7 @@ class CallHandler:
             self._rms_ema = ema_alpha * rms + (1 - ema_alpha) * self._rms_ema
 
         if result == "end_of_speech" and not self._processing:
+            self._silence_prompt_count = 0
             self._processing = True
             self._pipeline_task = asyncio.create_task(self._process_utterance_wrapper())
 
@@ -501,6 +502,7 @@ class CallHandler:
     async def _handle_barge_in(self):
         """Handle caller barge-in: stop pipeline, flush audio, seed VAD."""
         log.debug("[%s] Handling barge-in", self.call_sid)
+        self._silence_prompt_count = 0
 
         # 1. Signal pipeline to stop
         self._llm_cancel.set()

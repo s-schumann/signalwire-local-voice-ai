@@ -38,9 +38,9 @@ def resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
 
 
 def load_silero_model():
-    """Load the Silero VAD model once (v6+). Returns the JIT model."""
+    """Load the Silero VAD model once (v6.2, pinned). Returns the JIT model."""
     model, _ = torch.hub.load(
-        repo_or_dir='snakers4/silero-vad',
+        repo_or_dir='snakers4/silero-vad:be95df9',
         model='silero_vad',
         force_reload=False,
     )
