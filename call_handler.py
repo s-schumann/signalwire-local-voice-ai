@@ -61,8 +61,10 @@ class CallHandler:
         caller_number: str,
         greeting_cache: dict | None = None,
         silence_prompt_cache: list | None = None,
+        on_transcript: Callable[[str, str], Awaitable[None]] | None = None,
     ):
         self.config = config
+        self._on_transcript = on_transcript
         self.stt = stt
         self.tts = tts
         self.call_sid = call_sid
@@ -170,6 +172,8 @@ class CallHandler:
             await self._synthesize_and_send(greeting)
 
         self.transcript.append({"role": "agent", "text": greeting})
+        if self._on_transcript:
+            await self._on_transcript("agent", greeting)
         self.llm.history.append({"role": "assistant", "content": greeting})
         self.speaking = False
 
@@ -319,6 +323,8 @@ class CallHandler:
             log.warning("[%s] STT text truncated to 500 chars", self.call_sid)
 
         self.transcript.append({"role": "caller", "text": text})
+        if self._on_transcript:
+            await self._on_transcript("caller", text)
 
         # Add user message to LLM history (caller is responsible now)
         self.llm.add_user_message(text)
@@ -417,6 +423,8 @@ class CallHandler:
                     async with self._state_lock:
                         self._sentences_spoken.append(sentence)
                     self.transcript.append({"role": "agent", "text": sentence})
+                    if self._on_transcript:
+                        await self._on_transcript("agent", sentence)
 
                 if hangup_after:
                     log.info("[%s] LLM requested hangup", self.call_sid)
@@ -633,6 +641,8 @@ class CallHandler:
 
         # Add to transcript and LLM history (bot "remembers" it asked)
         self.transcript.append({"role": "agent", "text": prompt_text})
+        if self._on_transcript:
+            await self._on_transcript("agent", prompt_text)
         self.llm.history.append({"role": "assistant", "content": prompt_text})
 
         self.speaking = False

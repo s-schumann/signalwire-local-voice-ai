@@ -7,12 +7,13 @@ import collections
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse, HTMLResponse
 
 from config import Config
 from audio import SileroVAD
@@ -453,6 +454,249 @@ def create_app(config: Config, stt: SpeechToText, tts: TTS, vad_model,
         finally:
             await _cancel_task(duration_task)
             await _cancel_task(start_timeout_task)
+
+    # ── Demo mode endpoints ──
+
+    MAX_DEMO_SESSIONS = 2
+    _demo_session_count = 0
+
+    @app.get("/demo")
+    async def demo_page():
+        """Serve the browser-based demo client."""
+        if not config.demo_mode:
+            return Response(content="Demo mode not enabled. Start with: python main.py --demo",
+                            status_code=403)
+        demo_path = Path(__file__).parent / "static" / "demo.html"
+        if not demo_path.is_file():
+            return Response(content="Demo page not found", status_code=404)
+        return FileResponse(demo_path, media_type="text/html")
+
+    @app.websocket("/demo-stream")
+    async def demo_stream(ws: WebSocket):
+        """Browser-based demo: same pipeline as /media-stream, no SignalWire needed."""
+        nonlocal _demo_session_count
+
+        if not config.demo_mode:
+            await ws.close(code=4003, reason="Demo mode not enabled")
+            return
+
+        if _demo_session_count >= MAX_DEMO_SESSIONS:
+            await ws.close(code=4009, reason="Demo session limit reached")
+            return
+
+        # Check total capacity (shared with production calls)
+        if len(active_calls) >= config.max_concurrent_calls:
+            await ws.close(code=4009, reason="At capacity")
+            return
+
+        await ws.accept()
+        _demo_session_count += 1
+
+        call_sid = f"demo-{uuid.uuid4().hex[:12]}"
+        stream_sid = f"demo-stream-{uuid.uuid4().hex[:8]}"
+        caller_number = "demo-user"
+
+        handler: CallHandler | None = None
+        call_start_time: float = 0.0
+        duration_task: asyncio.Task | None = None
+        hangup_task: asyncio.Task | None = None
+        _finalized = False
+
+        async def send_audio(mulaw_bytes: bytes):
+            """Send mu-law audio back to the browser."""
+            chunk_size = 16000
+            for i in range(0, len(mulaw_bytes), chunk_size):
+                chunk = mulaw_bytes[i:i + chunk_size]
+                payload = base64.b64encode(chunk).decode("ascii")
+                msg = {
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": payload},
+                }
+                try:
+                    await ws.send_json(msg)
+                except Exception:
+                    return
+                await asyncio.sleep(0)
+
+        async def send_clear():
+            """Send clear event to flush outbound audio on barge-in."""
+            try:
+                await ws.send_json({"event": "clear", "streamSid": stream_sid})
+            except Exception:
+                return
+
+        async def on_transcript(role: str, text: str):
+            """Send transcript updates to the browser."""
+            try:
+                await ws.send_json({"event": "transcript", "role": role, "text": text})
+            except Exception:
+                pass
+
+        async def _finalize_demo():
+            nonlocal handler, _finalized
+            if _finalized or not handler:
+                return
+            _finalized = True
+
+            h = handler
+            handler = None
+
+            duration = max(0.0, time.perf_counter() - call_start_time) if call_start_time else 0.0
+            transcript = list(h.transcript)
+            summary = await h.on_stop()
+            _log_call_end(h.caller_number, h.call_sid, duration, summary)
+            _persist_call_metadata(
+                config=config,
+                caller_number=h.caller_number,
+                call_sid=h.call_sid,
+                duration=duration,
+                summary=summary,
+                transcript=transcript,
+                recording_path=h.last_recording_path,
+            )
+            active_calls.pop(h.call_sid, None)
+
+        async def _cancel_task(task: asyncio.Task | None):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        try:
+            log.info("━━━ Demo started  id=%s ━━━", call_sid[:12])
+            call_start_time = time.perf_counter()
+
+            # Start max duration timer
+            async def _enforce_max_duration_demo():
+                try:
+                    await asyncio.sleep(config.max_call_duration_s)
+                except asyncio.CancelledError:
+                    return
+                log.warning("Demo call exceeded max duration (%ds), closing", config.max_call_duration_s)
+                try:
+                    await ws.close(code=1000, reason="Max call duration exceeded")
+                except Exception:
+                    pass
+
+            duration_task = asyncio.create_task(_enforce_max_duration_demo())
+
+            # Hangup polling task — checks hangup_requested independently of media frames.
+            # In production, SignalWire sends a continuous audio stream so the hangup check
+            # in the media handler fires reliably. In the browser demo, frames may stop
+            # (e.g. after goodbye audio plays), so we need a separate poller.
+            hangup_event = asyncio.Event()
+
+            async def _poll_hangup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.2)
+                        h = handler
+                        if h and h.hangup_requested:
+                            hangup_event.set()
+                            return
+                except asyncio.CancelledError:
+                    return
+
+            hangup_task = asyncio.create_task(_poll_hangup())
+
+            # Create per-call VAD and handler
+            vad = SileroVAD(
+                model=vad_model,
+                speech_threshold=config.vad_speech_threshold,
+                silence_threshold_ms=config.vad_silence_threshold_ms,
+                min_speech_ms=config.vad_min_speech_ms,
+            )
+            handler = CallHandler(
+                config=config,
+                stt=stt,
+                tts=tts,
+                vad=vad,
+                call_sid=call_sid,
+                stream_sid=stream_sid,
+                caller_number=caller_number,
+                greeting_cache=greeting_cache,
+                silence_prompt_cache=silence_prompt_cache,
+                on_transcript=on_transcript,
+            )
+            active_calls[call_sid] = handler
+            await handler.start(send_audio, send_clear)
+
+            # Main loop — same protocol as SignalWire, plus async hangup detection
+            async def _recv_loop():
+                """Process incoming WebSocket messages. Returns on stop or disconnect."""
+                try:
+                    while True:
+                        raw = await ws.receive_text()
+                        if len(raw) > WS_MAX_FRAME_SIZE:
+                            continue
+
+                        data = json.loads(raw)
+                        event = data.get("event")
+
+                        if event == "media" and handler:
+                            payload = data.get("media", {}).get("payload", "")
+                            if payload:
+                                if len(payload) > MAX_AUDIO_PAYLOAD_B64_LEN:
+                                    continue
+                                try:
+                                    mulaw_bytes = base64.b64decode(payload, validate=True)
+                                except binascii.Error:
+                                    continue
+                                await handler.on_audio(mulaw_bytes)
+
+                        elif event == "stop":
+                            log.debug("Demo: client ended call")
+                            return "stop"
+
+                except WebSocketDisconnect:
+                    log.debug("Demo WebSocket disconnected")
+                    return "disconnect"
+
+                return None
+
+            # Run receive loop and hangup poller concurrently
+            recv_task = asyncio.create_task(_recv_loop())
+            done, pending = await asyncio.wait(
+                [recv_task, hangup_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel whichever didn't finish
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            if hangup_event.is_set():
+                log.debug("Demo: agent requested hangup")
+                try:
+                    await ws.send_json({"event": "hangup"})
+                except Exception:
+                    pass
+                await _finalize_demo()
+                try:
+                    await ws.close(code=1000, reason="Agent ended call")
+                except Exception:
+                    pass
+            else:
+                # Client sent stop or WebSocket disconnected
+                await _finalize_demo()
+
+        except WebSocketDisconnect:
+            log.debug("Demo WebSocket disconnected")
+            await _finalize_demo()
+        except Exception as e:
+            log.error("Demo WebSocket error: %s", type(e).__name__)
+            await _finalize_demo()
+        finally:
+            await _cancel_task(duration_task)
+            await _cancel_task(hangup_task)
+            _demo_session_count = max(0, _demo_session_count - 1)
 
     return app
 

@@ -49,6 +49,23 @@ HAL vs. a warranty scammer -- keeps him on the line with increasingly specific q
 
 <video src="https://github.com/user-attachments/assets/7e27ed27-0f59-45ed-8797-0300f976b2f6" controls></video>
 
+## Try it now (demo mode)
+
+Talk to HAL through your browser -- no phone number, no accounts, no public server needed. Just a local LLM.
+
+```bash
+git clone https://github.com/ninjahuttjr/hal-answering-service.git
+cd hal-answering-service
+setup.bat               # Windows (or ./setup.sh on Linux/macOS)
+python main.py --demo
+```
+
+On first run it will ask for your LLM server URL and API key (defaults work for LM Studio). Then open **http://localhost:8080/demo** in your browser, click **Start Demo Call**, and talk to HAL through your mic and speaker.
+
+You need [LM Studio](https://lmstudio.ai) (or any OpenAI-compatible LLM server) running before you start. Everything else -- speech-to-text, text-to-speech, voice activity detection -- runs locally with no accounts.
+
+> **Tip:** Use headphones to avoid echo feedback.
+
 ## Requirements
 
 | Requirement | Details |
@@ -56,9 +73,9 @@ HAL vs. a warranty scammer -- keeps him on the line with increasingly specific q
 | **Python** | 3.12+ |
 | **GPU** | Optional: NVIDIA CUDA recommended for best latency. CPU mode is supported (including macOS). |
 | **VRAM** | 16 GB+ recommended for full GPU stack (Whisper large-v3-turbo + Chatterbox Turbo + Silero VAD ~ 6 GB, plus your LLM) |
-| **SignalWire** | Account with a phone number ([signalwire.com](https://signalwire.com)) -- $0.50/mo for a number, ~$0.007/min for inbound calls |
+| **SignalWire** | Account with a phone number ([signalwire.com](https://signalwire.com)) -- $0.50/mo for a number, ~$0.007/min for inbound calls. **Not needed for demo mode.** |
 | **Local LLM** | [LM Studio](https://lmstudio.ai) or any OpenAI-compatible API server |
-| **Public endpoint** | HTTPS -- via Tailscale Funnel, Cloudflare Tunnel, ngrok, etc. |
+| **Public endpoint** | HTTPS -- via Tailscale Funnel, Cloudflare Tunnel, ngrok, etc. **Not needed for demo mode.** |
 
 ## Quick start
 
@@ -286,7 +303,7 @@ Measured across 15 conversational exchanges over 3 live phone calls:
 | File | Purpose |
 |---|---|
 | `main.py` | Entry point -- loads models, pre-records greetings, starts server |
-| `server.py` | FastAPI app -- webhook, WebSocket media stream, ntfy notifications |
+| `server.py` | FastAPI app -- webhook, WebSocket media stream, demo endpoints, ntfy notifications |
 | `call_handler.py` | Per-call pipeline -- VAD, STT, LLM, TTS, barge-in, recording |
 | `audio.py` | G.711 mu-law codec, resampling, Silero VAD wrapper |
 | `stt.py` | Faster-Whisper speech-to-text |
@@ -294,6 +311,7 @@ Measured across 15 conversational exchanges over 3 live phone calls:
 | `llm.py` | OpenAI-compatible LLM client with streaming sentence extraction |
 | `prompts.py` | HAL 9000 system prompt, greetings, summary prompt |
 | `config.py` | Dataclass config from environment variables |
+| `static/demo.html` | Browser-based demo client (used with `--demo` flag) |
 
 <details>
 <summary>Configuration reference</summary>

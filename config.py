@@ -87,6 +87,9 @@ class Config:
     # Owner info (for greetings)
     owner_name: str = field(default_factory=lambda: _env("OWNER_NAME", ""))
 
+    # Demo mode (set programmatically by --demo flag, not from env)
+    demo_mode: bool = False
+
     def __post_init__(self):
         """Validate configuration values after initialization."""
         errors = []

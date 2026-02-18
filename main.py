@@ -10,6 +10,7 @@ import os
 os.environ["NUMEXPR_MAX_THREADS"] = os.environ.get("NUMEXPR_MAX_THREADS", "8")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "8")  # suppress "NumExpr defaulting to N threads" msg
 
+import argparse
 import logging
 import sys
 import time
@@ -187,24 +188,200 @@ BANNER = r"""
   Answering Service
 """
 
+BANNER_DEMO = r"""
+  ██╗  ██╗ █████╗ ██╗
+  ██║  ██║██╔══██╗██║
+  ███████║███████║██║
+  ██╔══██║██╔══██║██║
+  ██║  ██║██║  ██║███████╗
+  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+  Answering Service — DEMO MODE
+"""
+
+
+def _demo_interactive_setup():
+    """Prompt for LLM settings if no .env exists or LLM fields are defaults.
+    Writes a minimal .env so settings persist for next run.
+    """
+    env_path = os.path.join(os.path.dirname(__file__) or ".", ".env")
+    has_dotenv = os.path.exists(env_path)
+
+    # Load existing .env if present
+    if has_dotenv:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(env_path)
+        except ImportError:
+            pass
+
+    # Check if LLM settings look configured (not just defaults / empty)
+    llm_url = os.environ.get("LLM_BASE_URL", "").strip()
+    llm_key = os.environ.get("LLM_API_KEY", "").strip()
+    owner = os.environ.get("OWNER_NAME", "").strip()
+
+    needs_setup = not has_dotenv or (not llm_url and not llm_key and not owner)
+    if not needs_setup:
+        return  # Already configured
+
+    print("\n  No .env file found. Let's set up the basics for demo mode.\n")
+
+    def _ask(prompt: str, default: str) -> str:
+        display = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
+        answer = input(display).strip()
+        return answer if answer else default
+
+    llm_url = _ask("LLM server URL", "http://127.0.0.1:1234/v1")
+    llm_key = _ask("LLM API key", "lm-studio")
+    llm_model = _ask("LLM model name (leave blank for server default)", "")
+    owner_name = _ask("Your name (for greetings)", "Dave")
+
+    # Write minimal .env
+    lines = [
+        "# HAL Answering Service — demo config (auto-generated)",
+        f"LLM_BASE_URL={llm_url}",
+        f"LLM_API_KEY={llm_key}",
+    ]
+    if llm_model:
+        lines.append(f"LLM_MODEL={llm_model}")
+    lines.append(f"OWNER_NAME={owner_name}")
+    lines.append("")  # trailing newline
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"\n  Settings saved to {env_path}\n")
+
+    # Put them in the environment immediately
+    os.environ["LLM_BASE_URL"] = llm_url
+    os.environ["LLM_API_KEY"] = llm_key
+    if llm_model:
+        os.environ["LLM_MODEL"] = llm_model
+    os.environ["OWNER_NAME"] = owner_name
+    # Stash demo owner name so it takes priority over .env OWNER_NAME
+    os.environ["_DEMO_OWNER_NAME"] = owner_name
+
+
+def _preflight_demo():
+    """Lightweight preflight for demo mode — skip SignalWire and PUBLIC_HOST checks."""
+    errors = []
+
+    # Check Python version
+    if sys.version_info < (3, 12):
+        errors.append(f"Python 3.12+ required, but you have {sys.version_info.major}.{sys.version_info.minor}.")
+
+    # Check python-dotenv
+    try:
+        from dotenv import load_dotenv  # noqa: F401
+    except ImportError:
+        errors.append(
+            "python-dotenv is not installed. Run the setup script: "
+            "setup.bat (Windows) or ./setup.sh (Linux/macOS)"
+        )
+
+    # Check PyTorch
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        errors.append("PyTorch is not installed. Run the setup script: setup.bat (Windows) or ./setup.sh (Linux/macOS)")
+
+    # Check chatterbox version
+    try:
+        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: F401
+    except ImportError:
+        try:
+            import chatterbox
+            ver = getattr(chatterbox, "__version__", "unknown")
+            errors.append(
+                f"chatterbox-tts {ver} is too old (missing tts_turbo module).\n"
+                "  Upgrade to >=0.1.5:\n"
+                '    pip install --no-deps "chatterbox-tts>=0.1.5"'
+            )
+        except ImportError:
+            errors.append(
+                "chatterbox-tts is not installed.\n"
+                "  Install it with:\n"
+                '    pip install --no-deps "chatterbox-tts>=0.1.5"'
+            )
+
+    if errors:
+        print("\n" + "=" * 60)
+        print("  SETUP ISSUES DETECTED")
+        print("=" * 60)
+        for i, err in enumerate(errors, 1):
+            print(f"\n  {i}. {err}")
+        print("\n" + "=" * 60)
+        print("  Fix the above and try again.")
+        print("=" * 60 + "\n")
+        sys.exit(1)
+
+
+def _has_signalwire_creds() -> bool:
+    """Check if SignalWire credentials are configured (not placeholders)."""
+    for key in ("SIGNALWIRE_PROJECT_ID", "SIGNALWIRE_TOKEN", "SIGNALWIRE_SPACE"):
+        val = os.environ.get(key, "").strip()
+        if not val or val.startswith("your-"):
+            return False
+    return True
+
 
 def main():
-    _preflight()
+    parser = argparse.ArgumentParser(description="HAL Answering Service")
+    parser.add_argument("--demo", action="store_true",
+                        help="Start in demo mode (browser mic, no SignalWire needed)")
+    parser.add_argument("--host", type=str, default=None,
+                        help="Bind address (default: 0.0.0.0 for --demo, else from HOST env)")
+    args = parser.parse_args()
+
+    # Load .env early so auto-detection can check SignalWire creds
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    # Auto-detect demo mode: if no --demo flag, check for SignalWire creds
+    is_demo = args.demo or not _has_signalwire_creds()
+
+    if is_demo and not args.demo:
+        log.info("No SignalWire credentials found — starting in demo mode automatically")
+
+    if is_demo:
+        _demo_interactive_setup()
+        _preflight_demo()
+    else:
+        _preflight()
 
     import uvicorn
-    from dotenv import load_dotenv
     from config import Config
     from audio import load_silero_model
     from stt import SpeechToText
     from tts import TTS
     from server import create_app
 
-    print(BANNER)
+    try:
+        print(BANNER_DEMO if is_demo else BANNER)
+    except UnicodeEncodeError:
+        print("  HAL Answering Service" + (" -- DEMO MODE" if is_demo else ""))
     t_start = time.perf_counter()
-    log.info("Starting up...")
+    log.info("Starting up%s...", " (demo mode)" if is_demo else "")
 
-    load_dotenv()
     config = Config()
+
+    if is_demo:
+        config.demo_mode = True
+        # Use the name from interactive setup, or default to "Dave"
+        demo_owner = os.environ.get("_DEMO_OWNER_NAME", "").strip()
+        if demo_owner:
+            config.owner_name = demo_owner
+        elif not config.owner_name or config.owner_name in ("YourName", ""):
+            config.owner_name = "Dave"
+        # Default to all-interfaces so the demo is accessible from LAN
+        if args.host is None and config.host == "127.0.0.1":
+            config.host = "0.0.0.0"
+
+    if args.host is not None:
+        config.host = args.host
+
     log.info("Config loaded (LLM: %s, STT: %s)", config.llm_model, config.stt_model)
 
     import torch
@@ -270,7 +447,24 @@ def main():
     app = create_app(config, stt, tts, vad_model, greeting_cache, silence_prompt_cache)
 
     total = time.perf_counter() - t_start
-    log.info("Ready in %.1fs — listening on %s:%d", total, config.host, config.port)
+    if args.demo:
+        log.info("Ready in %.1fs — open http://localhost:%d/demo in your browser",
+                 total, config.port)
+        if config.host == "0.0.0.0":
+            import socket
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                lan_ip = s.getsockname()[0]
+                s.close()
+                log.info("LAN access: http://%s:%d/demo", lan_ip, config.port)
+                log.info("Note: browsers require HTTPS for mic access on non-localhost.")
+                log.info("  Chrome: chrome://flags → 'Insecure origins treated as secure'")
+                log.info("    → add http://%s:%d → Relaunch Chrome", lan_ip, config.port)
+            except Exception:
+                pass
+    else:
+        log.info("Ready in %.1fs — listening on %s:%d", total, config.host, config.port)
 
     uvicorn.run(app, host=config.host, port=config.port, log_level="warning",
                 ws_max_size=65536)

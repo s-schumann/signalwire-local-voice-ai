@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 # Sentence boundary pattern — split on . ! ? followed by space or end
 SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?])\s+')
 
-MAX_HISTORY_MESSAGES = 20  # 10 turns (user + assistant)
+MAX_HISTORY_MESSAGES = 100  # 50 turns (user + assistant) — scammer calls need long context
 MAX_SENTENCES_PER_RESPONSE = 6  # Phone calls: 1-2 normal, 6 is generous safety cap
 
 # GLM-4 special tokens and other garbage that can leak from LLMs
