@@ -45,9 +45,9 @@ Audio to caller <---|---+                      |
 
 ## Example call
 
-A real recorded call -- HAL picks up, screens the caller, and hangs up:
+HAL vs. a warranty scammer -- keeps him on the line with increasingly specific questions until Dave gives up:
 
-<video src="https://github.com/user-attachments/assets/3e2e5dbd-615d-431a-90f1-8bc2af0f7fae" controls></video>
+<video src="https://github.com/user-attachments/assets/7e27ed27-0f59-45ed-8797-0300f976b2f6" controls></video>
 
 ## Requirements
 

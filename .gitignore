@@ -38,6 +38,9 @@ Thumbs.db
 tts_benchmark.py
 tts_samples/
 demo_call.py
+demo_call.mp4
+make_demo_video.bat
+make_demo_video.py
 test_scripts/
 glm-4.7-flash-nothink.jinja
 nul
