@@ -122,13 +122,15 @@ class LLMClient:
             kwargs = dict(
                 model=self.config.llm_model,
                 messages=messages,
-                max_tokens=self.config.llm_max_tokens,
+                max_completion_tokens=self.config.llm_max_tokens,
                 temperature=self.config.llm_temperature,
                 stream=True,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             if self.config.llm_frequency_penalty:
                 kwargs["frequency_penalty"] = self.config.llm_frequency_penalty
+            # LM Studio thinking-mode suppression — skip for standard providers
+            if self.config.llm_extra_body:
+                kwargs["extra_body"] = self.config.llm_extra_body
             stream = self.client.chat.completions.create(**kwargs)
         except Exception as e:
             log.error("LLM stream creation failed: %s", e)
@@ -233,13 +235,15 @@ class LLMClient:
             {"role": "user", "content": prompt},
         ]
 
-        response = self.client.chat.completions.create(
+        summary_kwargs = dict(
             model=self.config.llm_model,
             messages=messages,
-            max_tokens=300,
+            max_completion_tokens=300,
             temperature=0.3,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
+        if self.config.llm_extra_body:
+            summary_kwargs["extra_body"] = self.config.llm_extra_body
+        response = self.client.chat.completions.create(**summary_kwargs)
         result = response.choices[0].message
         content = result.content or ""
         # Fallback: if thinking mode consumed everything, use reasoning_content

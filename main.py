@@ -230,9 +230,9 @@ def _demo_interactive_setup():
         answer = input(display).strip()
         return answer if answer else default
 
-    llm_url = _ask("LLM server URL", "http://127.0.0.1:1234/v1")
-    llm_key = _ask("LLM API key", "lm-studio")
-    llm_model = _ask("LLM model name (leave blank for server default)", "")
+    llm_url = _ask("LLM server URL", "https://api.openai.com/v1")
+    llm_key = _ask("LLM API key", "")
+    llm_model = _ask("LLM model name", "gpt-4o-mini")
     owner_name = _ask("Your name (for greetings)", "Dave")
 
     # Write minimal .env

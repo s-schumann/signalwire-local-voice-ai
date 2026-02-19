@@ -1,5 +1,6 @@
 """Dataclass-based config loaded from environment variables."""
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -33,6 +34,21 @@ def _env_float(key: str, default: float = 0.0) -> float:
         return default
 
 
+def _env_json(key: str, default: dict = None) -> dict:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default if default is not None else {}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            log.warning("LLM_EXTRA_BODY must be a JSON object, got %s — ignoring", type(parsed).__name__)
+            return default if default is not None else {}
+        return parsed
+    except json.JSONDecodeError as e:
+        log.warning("Invalid JSON for %s=%r: %s — ignoring", key, raw[:80], e)
+        return default if default is not None else {}
+
+
 @dataclass
 class Config:
     # SignalWire
@@ -53,12 +69,16 @@ class Config:
     stt_compute_type: str = field(default_factory=lambda: _env("STT_COMPUTE_TYPE", "auto"))
 
     # LLM
-    llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:1234/v1"))
-    llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", "lm-studio"))
-    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "zai-org/glm-4.7-flash"))
+    llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "https://api.openai.com/v1"))
+    llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", ""))
+    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gpt-4o-mini"))
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LLM_MAX_TOKENS", 200))
     llm_temperature: float = field(default_factory=lambda: _env_float("LLM_TEMPERATURE", 0.7))
     llm_frequency_penalty: float = field(default_factory=lambda: _env_float("LLM_FREQUENCY_PENALTY", 0.0))
+    # Extra body params for the LLM API (JSON string). Used by LM Studio to suppress
+    # thinking mode. Leave empty for OpenAI/standard providers.
+    # Example: {"chat_template_kwargs": {"enable_thinking": false}}
+    llm_extra_body: dict = field(default_factory=lambda: _env_json("LLM_EXTRA_BODY", {}))
 
     # TTS (Chatterbox Turbo)
     tts_device: str = field(default_factory=lambda: _env("TTS_DEVICE", "auto"))
