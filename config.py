@@ -104,6 +104,13 @@ class Config:
     ntfy_topic: str = field(default_factory=lambda: _env("NTFY_TOPIC", ""))
     ntfy_token: str = field(default_factory=lambda: _env("NTFY_TOKEN", ""))
 
+    # Response mode: "llm" (default) or "webhook"
+    response_mode: str = field(default_factory=lambda: _env("RESPONSE_MODE", "llm"))
+    # Webhook URL for response_mode=webhook
+    webhook_url: str = field(default_factory=lambda: _env("WEBHOOK_URL", ""))
+    # Webhook HTTP timeout in seconds
+    webhook_timeout: float = field(default_factory=lambda: _env_float("WEBHOOK_TIMEOUT", 5.0))
+
     # Owner info (for greetings)
     owner_name: str = field(default_factory=lambda: _env("OWNER_NAME", ""))
 
@@ -135,6 +142,15 @@ class Config:
             errors.append(f"MAX_CONCURRENT_CALLS must be >= 1, got {self.max_concurrent_calls}")
         if self.max_call_duration_s < 10:
             errors.append(f"MAX_CALL_DURATION_S must be >= 10, got {self.max_call_duration_s}")
+
+        # Response mode validation
+        self.response_mode = self.response_mode.strip().lower()
+        if self.response_mode not in ("llm", "webhook"):
+            errors.append(f"RESPONSE_MODE must be 'llm' or 'webhook', got {self.response_mode!r}")
+        if self.response_mode == "webhook" and not self.webhook_url:
+            errors.append("WEBHOOK_URL is required when RESPONSE_MODE=webhook")
+        if self.webhook_timeout < 0.5:
+            errors.append(f"WEBHOOK_TIMEOUT must be >= 0.5, got {self.webhook_timeout}")
 
         # Voice prompt file check
         if self.tts_voice_prompt and not os.path.isfile(self.tts_voice_prompt):

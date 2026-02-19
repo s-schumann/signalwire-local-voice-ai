@@ -17,9 +17,10 @@ import numpy as np
 from config import Config
 from audio import mulaw_decode, SileroVAD, SAMPLE_RATE_8K
 from stt import SpeechToText
-from llm import LLMClient
+from llm import LLMClient, extract_sentences
 from tts import TTS
 from prompts import get_greeting
+import webhook
 
 log = logging.getLogger(__name__)
 
@@ -326,6 +327,89 @@ class CallHandler:
         if self._on_transcript:
             await self._on_transcript("caller", text)
 
+        # Branch based on response mode
+        if self.config.response_mode == "webhook":
+            await self._process_webhook_response(text)
+        else:
+            await self._process_llm_response(text)
+
+    async def _process_webhook_response(self, text: str):
+        """Webhook path: POST text to webhook, speak the response via TTS."""
+        # Reset sentence tracking
+        async with self._state_lock:
+            self._sentences_spoken = []
+            self._history_finalized = False
+
+        self.speaking = True
+        self._bot_speak_start_time = time.perf_counter()
+        self._barge_in_window.clear()
+        self._barge_in_audio_buffer.clear()
+        self._llm_cancel.clear()
+
+        t1 = time.perf_counter()
+        hangup_after = False
+
+        try:
+            # POST to webhook (cancellable via asyncio)
+            response_text = await webhook.get_response(
+                url=self.config.webhook_url,
+                text=text,
+                call_sid=self.call_sid,
+                caller_number=self.caller_number,
+                timeout=self.config.webhook_timeout,
+            )
+            webhook_ms = (time.perf_counter() - t1) * 1000
+
+            if self._llm_cancel.is_set():
+                log.debug("[%s] Interrupted during webhook, aborting", self.call_sid)
+                return
+
+            # Check for [HANGUP] tag
+            if HANGUP_TAG in response_text.upper():
+                response_text = re.sub(r'\[HANGUP\]', '', response_text, flags=re.IGNORECASE).strip()
+                if response_text and not any(c.isalnum() for c in response_text):
+                    response_text = ""
+                hangup_after = True
+
+            # Split into sentences and speak each one
+            sentences = extract_sentences(response_text) if response_text else []
+            if sentences:
+                log.info('[%s] Webhook: "%s"  (%.0fms)', self.call_sid, sentences[0], webhook_ms)
+
+            for sentence in sentences:
+                if self._llm_cancel.is_set():
+                    break
+
+                await self._synthesize_and_send(sentence)
+
+                if self._llm_cancel.is_set():
+                    break
+
+                async with self._state_lock:
+                    self._sentences_spoken.append(sentence)
+                self.transcript.append({"role": "agent", "text": sentence})
+                if self._on_transcript:
+                    await self._on_transcript("agent", sentence)
+
+        finally:
+            # Mark history finalized (webhook mode doesn't use LLM history)
+            async with self._state_lock:
+                self._history_finalized = True
+
+        self.speaking = False
+        self._bot_speak_start_time = 0.0
+
+        if hangup_after:
+            remaining = max(0, self._playback_end_time - time.perf_counter()) + 0.5
+            log.debug("[%s] Waiting %.1fs for goodbye audio to play", self.call_sid, remaining)
+            await asyncio.sleep(remaining)
+            self.hangup_requested = True
+            log.debug("[%s] Hangup flag set", self.call_sid)
+        else:
+            self._reset_silence_timer()
+
+    async def _process_llm_response(self, text: str):
+        """LLM path: stream text through LLM, speak sentences via TTS."""
         # Add user message to LLM history (caller is responsible now)
         self.llm.add_user_message(text)
 
@@ -788,6 +872,11 @@ class CallHandler:
         caller_messages = [t for t in self.transcript if t["role"] == "caller"]
         if not caller_messages:
             return f"Call from {self.caller_number}: Caller hung up without speaking."
+
+        # In webhook mode, skip LLM summary — return plain transcript
+        if self.config.response_mode == "webhook":
+            lines = [f"{t['role'].capitalize()}: {t['text']}" for t in self.transcript[:10]]
+            return f"Call from {self.caller_number}:\n" + "\n".join(lines)
 
         try:
             summary = await asyncio.to_thread(self.llm.get_summary, self.transcript)
